@@ -33,10 +33,31 @@ extern void nrnmpi_int_alltoallv(int*, int*, int*, int*, int*, int*);
 extern void nrnmpi_int_gather(int*, int*, int, int);
 extern void nrnmpi_int_gatherv(int*, int, int*, int*, int*, int);
 extern void nrnmpi_barrier();
+
+extern IvocVect* vector_arg(int);
+extern void vector_resize(IvocVect*, int);
 }
 
 static unsigned long long dmasend_time_;
 static int n_xtra_cons_check_;
+#define MAXNCONS 10
+#if MAXNCONS
+static int xtra_cons_hist_[MAXNCONS+1];
+#endif
+
+#if BGPDMA == 2
+#define TBUFSIZE (1<<15)
+#else
+#define TBUFSIZE 0
+#endif
+
+#if TBUFSIZE
+static unsigned long tbuf_[TBUFSIZE];
+static int itbuf_;
+#define TBUF tbuf_[itbuf_++] = (unsigned long)DCMF_Timebase();
+#else
+#define TBUF /**/
+#endif
 
 #include <structpool.h>
 
@@ -205,19 +226,51 @@ static DCMF_Request_t * msend_recv(const DCQuad  * msginfo,
 
 double nrn_bgp_receive_time(int type) { // and others
 	double rt = 0.;
-	if (!use_bgpdma_) { return rt; }
 	switch(type) {
 	case 2: //in msend_recv
-		for (int i = 0; i < BGP_INTERVAL; ++i) {
+		if (!use_bgpdma_) { return rt; }
+		for (int i = 0; i < n_bgp_interval; ++i) {
 			rt += bgp_receive_buffer[i]->timebase_ * DCMF_Tick();
 		}
 		break;
 	case 3: // in BGP_DMAsend::send
+		if (!use_bgpdma_) { return rt; }
 		rt = dmasend_time_ * DCMF_Tick();
 		break;
 	case 4: // number of extra conservation checks
 		rt = double(n_xtra_cons_check_);
+		// and if there is second vector arg then also return the histogram
+#if MAXNCONS
+		if (ifarg(2) && use_bgpdma_) {
+			IvocVect* vec = vector_arg(2);
+			vector_resize(vec, MAXNCONS+1);
+			for (int i=0; i <= MAXNCONS; ++i) {
+				vector_vec(vec)[i] = double(xtra_cons_hist_[i]);
+			}
+		}
+#endif // MAXNCONS
+#if TBUFSIZE
+		if (ifarg(3)) {
+			IvocVect* vec = vector_arg(3);
+			vector_resize(vec, itbuf_+1);
+			for (int i=0; i <= itbuf_; ++i) {
+				vector_vec(vec)[i] = double(tbuf_[i]);
+			}
+			vector_vec(vec)[itbuf_] = DCMF_Tick();
+		}
+#endif
 		break;
+#if ALTHASH
+	case 5:
+		rt = double(gid2in_->max_chain_length());
+		break;
+	case 6:
+		rt = double(gid2in_->nclash());
+		break;
+	case 7:
+		rt = double(gid2in_->nfind());
+		break;
+#endif
 	}
 	return rt;
 }
@@ -252,16 +305,21 @@ static void  multicast_done(void* arg) {
 }
 
 static void bgp_dma_init() {
-	for (int i = 0; i < BGP_INTERVAL; ++i) {
+	for (int i = 0; i < n_bgp_interval; ++i) {
 		bgp_receive_buffer[i]->init();
 	}
 	current_rbuf = 0;
-	next_rbuf = 1;
+	next_rbuf = n_bgp_interval - 1;
 	for (int i=0; i < NSEND2; ++i) {
 		req_in_use[i] = false;
 	}
 	dmasend_time_ = 0;
 	n_xtra_cons_check_ = 0;
+#if MAXNCONS
+	for (int i=0; i <= MAXNCONS; ++i) {
+		xtra_cons_hist_[i] = 0;
+	}
+#endif // MAXNCONS
 }
 
 static int bgp_advance() {
@@ -377,16 +435,26 @@ static int gathersrcgid(int hostbegin, int totalngid, int* ngid,
 
 void bgp_dma_receive() {
 //	nrn_spike_exchange();
+	TBUF
 	double w1, w2;
+	int ncons = 0;
 	int& s = bgp_receive_buffer[current_rbuf]->nsend_;
 	int& r = bgp_receive_buffer[current_rbuf]->nrecv_;
 	w1 = nrnmpi_wtime();
 #if BGPDMA == 2
 	DCMF_Messager_advance();
+	TBUF
+	// demonstrates that most of the time here is due to load imbalance
+#if TBUFSIZE
+	nrnmpi_barrier();
+#endif
+	TBUF
 	while (nrnmpi_bgp_conserve(s, r) != 0) {
 		DCMF_Messager_advance();
-		++n_xtra_cons_check_;
+		++ncons;
 	}
+	TBUF
+	n_xtra_cons_check_ += ncons;
 #else
 	bgp_advance();
 	while (nrnmpi_bgp_conserve(s, r) != 0) {
@@ -395,14 +463,26 @@ void bgp_dma_receive() {
 #endif
 	w1 = nrnmpi_wtime() - w1;
 	w2 = nrnmpi_wtime();
+#if TBUFSIZE
+	tbuf_[itbuf_++] = (unsigned long)ncons;
+	tbuf_[itbuf_++] = (unsigned long)s;
+	tbuf_[itbuf_++] = (unsigned long)r;
+#endif
+#if BGPMDA == 2 && MAXNCONS
+	if (ncons > MAXNCONS) { ncons = MAXNCONS; }
+	++xtra_cons_hist_[ncons];
+#endif // MAXNCONS
 	bgp_receive_buffer[current_rbuf]->enqueue();
 	wt1_ = nrnmpi_wtime() - w2;
 	wt_ = w1;
 #if BGP_INTERVAL == 2
 //printf("%d reverse buffers %g\n", nrnmpi_myid, t);
-	current_rbuf = next_rbuf;
-	next_rbuf = ((next_rbuf + 1)&1);
+	if (n_bgp_interval == 2) {
+		current_rbuf = next_rbuf;
+		next_rbuf = ((next_rbuf + 1)&1);
+	}
 #endif
+	TBUF
 }
 
 void bgp_dma_send(PreSyn* ps, double t) {
@@ -447,9 +527,13 @@ void bgp_dma_setup() {
 	// gid2out_ sends spikes to which hosts
 	determine_target_hosts();
 
-	bgp_receive_buffer[0] = new BGP_ReceiveBuffer();
+	if (!bgp_receive_buffer[0]) {
+		bgp_receive_buffer[0] = new BGP_ReceiveBuffer();
+	}
 #if BGP_INTERVAL == 2
-	bgp_receive_buffer[1] = new BGP_ReceiveBuffer();
+	if (n_bgp_interval == 2 && !bgp_receive_buffer[1]) {
+		bgp_receive_buffer[1] = new BGP_ReceiveBuffer();
+	}
 #endif
 #if BGPDMA == 2
     if (0 || !once) { once = 1;
