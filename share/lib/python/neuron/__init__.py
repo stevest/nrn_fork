@@ -76,8 +76,20 @@ $Id: __init__.py,v 1.1 2008/05/26 11:39:44 hines Exp hines $
 
 try:
     import hoc
-except ImportError:
-    raise ImportError("neuron.hoc module not found.\n \n Are you perhaps importing neuron in\n the nrnpython source directory? \n Please move out of this directory and try again,\n or remove nrnpython from your import path.")
+except ImportError, e:
+    raise ImportError, """
+Can't import neuron.hoc module.
+
+In case you are importing neuron from within
+a directory containing neuron/__init__.py
+which is not the installed neuron package for python,
+move out of this directory and try again.
+
+The original error message was: 
+
+%s
+
+"""%e.message
     
 
 import nrn
@@ -96,8 +108,11 @@ def help(request):
     doc.help(request)
     help = doc.help
 
-import pydoc
-pydoc.help = help
+try:
+  import pydoc
+  pydoc.help = help
+except:
+  pass
 
 # Global test-suite function
 
@@ -168,7 +183,7 @@ def load_mechanisms(path):
     # in case NEURON is assuming a different architecture to Python,
     # we try multiple possibilities
 
-    arch_list = [platform.machine(), 'i686', 'x86_64', 'powerpc']
+    arch_list = [platform.machine(), 'i686', 'x86_64', 'powerpc', 'umac']
 
     for arch in arch_list:
         lib_path = os.path.join(path, arch, '.libs', 'libnrnmech.so')

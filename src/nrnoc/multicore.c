@@ -291,9 +291,9 @@ return;
 	cpu_set_t mask;
 	CPU_ZERO(&mask);
 	CPU_SET(i, &mask);
-#endif
 	mask = (1 << i);
 	sched_setaffinity(0, 4, &mask);
+#endif
 }
 
 static void* slave_main(void* arg) {
@@ -910,7 +910,9 @@ void nrn_mk_table_check() {
 			}
 		}
 	}
-	table_check_ = (Datum*)emalloc(table_check_cnt_*sizeof(Datum));
+	if (table_check_cnt_) {
+		table_check_ = (Datum*)emalloc(table_check_cnt_*sizeof(Datum));
+	}
 	i=0;
 	for (id=0; id < nrn_nthread; ++id) {
 		NrnThread* nt = nrn_threads + id;

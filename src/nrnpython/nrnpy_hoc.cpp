@@ -323,9 +323,10 @@ static Symbol* getsym(char* name, Object* ho, int fail) {
 			sym = hoc_table_lookup(name, hoc_built_in_symlist);
 		}
 	}
+	if (sym && sym->type == UNDEF) { sym = 0; }
 	if (!sym && fail) {
 		char e[200];
-		sprintf(e, "'%s' is not a hoc variable name.", name);
+		sprintf(e, "'%s' is not a defined hoc variable name.", name);
 		PyErr_SetString(PyExc_LookupError, e);
 	}
 	return sym;
@@ -1454,6 +1455,19 @@ static PyObject* setpointer(PyObject* self, PyObject* args) {
 	return result;
 }
 
+static PyObject* hocobj_vptr(PyObject* pself, PyObject* args) {
+	Object* ho = ((PyHocObject*)pself)->ho_;
+	PyObject* po = NULL;
+	if (ho) {
+		po = Py_BuildValue("O", PyLong_FromVoidPtr(ho));
+	}
+	if (!po) {
+		PyErr_SetString(PyExc_TypeError, "HocObject does not wrap a Hoc Object");
+	}
+	return po;
+}
+
+
 static PySequenceMethods hocobj_seqmeth = {
 	hocobj_len, NULL, NULL, hocobj_getitem,
 	NULL, hocobj_setitem, NULL, NULL,
@@ -1630,6 +1644,7 @@ static PyMethodDef hocobj_methods[] = {
 	{"allsec", nrnpy_forall, METH_VARARGS, "Return iterator over all sections." },
 	{"Section", (PyCFunction)nrnpy_newsecobj, METH_VARARGS|METH_KEYWORDS, "Return a new Section" },
 	{"setpointer", setpointer, METH_VARARGS, "Assign hoc variable address to NMODL POINTER"},
+	{"hocobjptr", hocobj_vptr, METH_NOARGS, "Hoc Object pointer as a long int"},
 	{"hname", hocobj_name, METH_NOARGS, "More specific than __str__() or __attr__()."},
 	{NULL, NULL, 0, NULL}
 };

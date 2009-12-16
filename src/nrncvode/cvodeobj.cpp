@@ -258,6 +258,9 @@ static double dstates(void* v) {
 	return 0.;
 }
 
+extern double nrn_hoc2fun(void* v);
+extern double nrn_hoc2scatter_y(void* v);
+
 static double error_weights(void* v) {
 	NetCvode* d = (NetCvode*)v;
 	d->error_weights();
@@ -519,6 +522,8 @@ static Member_func members[] = {
 	"cache_efficient", cache_efficient,
 	"use_long_double", use_long_double,
 	"use_parallel", use_parallel,
+	"f", nrn_hoc2fun,
+	"yscatter", nrn_hoc2scatter_y,
 	0,0
 };
 

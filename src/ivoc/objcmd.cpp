@@ -4,6 +4,7 @@
 #include <InterViews/window.h>
 #include "ivoc.h"
 #include "scenevie.h"
+#include "utility.h"
 #endif
 
 #include <stdio.h>
@@ -198,6 +199,7 @@ boolean HocCommandTool::event(Event& e) {
 	}
 #endif
 	if (e.type() == Event::down) {
+		handle_old_focus();
 		Resource::ref(this);
 		e.grab(this);
 #ifdef WIN32

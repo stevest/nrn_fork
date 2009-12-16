@@ -79,6 +79,7 @@ extern Object* (*nrnpy_pysec_cell_p_)(Section*);
 static Object* pysec_cell(Section*);
 extern int (*nrnpy_pysec_cell_equals_p_)(Section*, Object*);
 static int pysec_cell_equals(Section*, Object*);
+static void remake_pmech_types();
 
 static char* pysec_name(Section* sec) {
 	static char buf[512];
@@ -366,8 +367,14 @@ static PyObject* NPySecObj_insert(NPySecObj* self, PyObject*  args) {
 	}
 	PyObject* otype = PyDict_GetItemString(pmech_types, tname);
 	if (!otype) {
-		PyErr_SetString(PyExc_ValueError, "argument not a density mechanism name.");
-		return NULL;
+		// check first to see if the pmech_types needs to be
+		// augmented by any new KSChan
+		remake_pmech_types();
+		otype = PyDict_GetItemString(pmech_types, tname);
+		if (!otype) {
+			PyErr_SetString(PyExc_ValueError, "argument not a density mechanism name.");
+			return NULL;
+		}
 	}
 	int type = PyInt_AsLong(otype);
 //printf("NPySecObj_insert %s %d\n", tname, type);
@@ -1018,14 +1025,7 @@ myPyMODINIT_FUNC nrnpy_nrn(void)
         goto fail;
     Py_INCREF(&nrnpy_MechanismType);
     PyModule_AddObject(m, "Mechanism", (PyObject *)pmech_generic_type);
-    pmech_types = PyDict_New();
-    rangevars_ = PyDict_New();
-    rangevars_add(hoc_table_lookup("diam", hoc_built_in_symlist));
-    rangevars_add(hoc_table_lookup("cm", hoc_built_in_symlist));
-    rangevars_add(hoc_table_lookup("v", hoc_built_in_symlist));
-    for (i=4; i < n_memb_func; ++i) { // start at pas
-	nrnpy_reg_mech(i);
-    }
+    remake_pmech_types();
     nrnpy_reg_mech_p_ = nrnpy_reg_mech;
     nrnpy_o2loc_p_ = o2loc;
     nrnpy_pysec_name_p_ = pysec_name;
@@ -1042,6 +1042,20 @@ myPyMODINIT_FUNC nrnpy_nrn(void)
     fail:
 	return;
 #endif
+}
+
+void remake_pmech_types() {
+    int i;
+    Py_XDECREF(pmech_types);
+    Py_XDECREF(rangevars_);
+    pmech_types = PyDict_New();
+    rangevars_ = PyDict_New();
+    rangevars_add(hoc_table_lookup("diam", hoc_built_in_symlist));
+    rangevars_add(hoc_table_lookup("cm", hoc_built_in_symlist));
+    rangevars_add(hoc_table_lookup("v", hoc_built_in_symlist));
+    for (i=4; i < n_memb_func; ++i) { // start at pas
+	nrnpy_reg_mech(i);
+    }
 }
 
 void nrnpy_reg_mech(int type) {

@@ -67,6 +67,7 @@ extern int cvode_active_;
 extern NetCvode* net_cvode_instance;
 extern cTemplate** nrn_pnt_template_;
 extern double t, dt;
+extern void nrn_cvfun(double t, double* y, double* ydot);
 #define nt_dt nrn_threads->_dt
 #define nt_t nrn_threads->_t
 extern void nrn_parent_info(Section*);
@@ -3987,7 +3988,7 @@ void NetCvode::states() {
 	vp = vector_vec(v);
 	k = 0;
 	if (gcv_) {
-		gcv_->states(vp + j);
+		gcv_->states(vp);
 	}else{
 		lvardtloop(i, j) {
 			p[i].lcv_[j].states(vp+k);
@@ -4016,13 +4017,41 @@ void NetCvode::dstates() {
 	vp = vector_vec(v);
 	k = 0;
 	if (gcv_) {
-		gcv_->states(vp + j);
+		gcv_->dstates(vp);
 	}else{
 		lvardtloop(i, j) {
 			p[i].lcv_[j].dstates(vp+k);
 			k += p[i].lcv_[j].neq_;
 		}
 	}
+}
+
+void nrn_cvfun(double t, double* y, double* ydot) {
+	NetCvode* d = net_cvode_instance;
+	d->gcv_->fun_thread(t, y, ydot, nrn_threads);
+}
+
+double nrn_hoc2fun(void* v) {
+	NetCvode* d = (NetCvode*)v;
+	double tt = *getarg(1);
+	Vect* s = vector_arg(2);
+	Vect* ds = vector_arg(3);
+	if (!d->gcv_){hoc_execerror("not global variable time step", 0);}
+	if (s->capacity() != d->gcv_->neq_) { hoc_execerror("size of state vector != number of state equations", 0); }
+	if (nrn_nthread > 1) {hoc_execerror("only one thread allowed", 0);}
+	ds->resize(s->capacity());
+	nrn_cvfun(tt, vector_vec(s), vector_vec(ds));
+	return 0.;
+}
+
+double nrn_hoc2scatter_y(void* v) {
+	NetCvode* d = (NetCvode*)v;
+	Vect* s = vector_arg(1);
+	if (!d->gcv_){hoc_execerror("not global variable time step", 0);}
+	if (s->capacity() != d->gcv_->neq_) { hoc_execerror("size of state vector != number of state equations", 0); }
+	if (nrn_nthread > 1) {hoc_execerror("only one thread allowed", 0);}
+	d->gcv_->scatter_y(vector_vec(s), 0);
+	return 0.;
 }
 
 void NetCvode::error_weights() {
@@ -4765,17 +4794,18 @@ void PreSynSave::savestate_restore(double tt, NetCvode* nc) {
 DiscreteEvent* PreSyn::savestate_read(FILE* f) {
 	PreSyn* ps = nil;
 	char buf[200];
-	int index;
+	int index, tid;
 	fgets(buf, 200, f);
-	assert(sscanf(buf, "%d\n", &index));
+	assert(sscanf(buf, "%d %d\n", &index, &tid) == 2);
 	ps = PreSynSave::hindx2presyn(index);
 	assert(ps);
+	ps->nt_ = nrn_threads + tid;
 	return new PreSynSave(ps);
 }
 
 void PreSynSave::savestate_write(FILE* f) {
 	fprintf(f, "%d\n", PreSynType);
-	fprintf(f, "%d\n", presyn_->hi_index_);
+	fprintf(f, "%d %d\n", presyn_->hi_index_, presyn_->nt_?presyn_->nt_->id:0);
 }
 
 declareTable(PreSynSaveIndexTable, long, PreSyn*)
