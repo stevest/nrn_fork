@@ -5,7 +5,12 @@
 #include <math.h>
 #include <InterViews/resource.h>
 #include <nrnoc2iv.h>
+#define ALTHASH 1
+#if ALTHASH
+#include <nrnhash_alt.h>
+#else
 #include <nrnhash.h>
+#endif
 #include <bbs.h>
 
 #undef MD
@@ -23,6 +28,9 @@ implementNrnHash(Gid2PreSyn, int, PreSyn*)
 #include <netcvode.h>
 
 #define BGP_INTERVAL 2
+#if BGP_INTERVAL == 2
+static int n_bgp_interval;
+#endif
 
 static Symbol* netcon_sym_;
 static Gid2PreSyn* gid2out_;
@@ -177,7 +185,14 @@ static int idxout_;
 static void nrn_spike_exchange_compressed();
 #endif // NRNMPI
 
+#if BGPDMA == 2
+#define HAVE_DCMF_RECORD_REPLAY 0
+#else
+#define HAVE_DCMF_RECORD_REPLAY 0
+#endif
+
 #if BGPDMA
+int use_dcmf_record_replay;
 int use_bgpdma_;
 static void bgp_dma_setup();
 static void bgp_dma_init();
@@ -385,7 +400,7 @@ static void calc_actual_mindelay() {
 	//reasons why mindelay_ can be smaller than min_interprocessor_delay
 	// are use_bgpdma when BGP_INTERVAL == 2
 #if BGPDMA && (BGP_INTERVAL == 2)
-	if (use_bgpdma_) {
+	if (use_bgpdma_ && n_bgp_interval == 2) {
 		mindelay_ = min_interprocessor_delay_ / 2.;
 	}else{
 		mindelay_ = min_interprocessor_delay_;
@@ -459,11 +474,25 @@ void nrn_spike_exchange_init() {
 	//if (nrnmpi_myid == 0){printf("usable_mindelay_ = %g\n", usable_mindelay_);}
 }
 
+
+#if BGPDMA
+#include "bgpdma.cpp"
+#else
+#define TBUFSIZE 0
+#define TBUF /**/
+#endif
+
 #if NRNMPI
 void nrn_spike_exchange() {
 	if (!active_) { return; }
 
 	if (use_compress_) { nrn_spike_exchange_compressed(); return; }
+	TBUF
+	TBUF
+#if TBUFSIZE
+	nrnmpi_barrier();
+#endif
+	TBUF
 	double wt;
 	int i, n;
 #if NRNSTAT
@@ -477,6 +506,13 @@ void nrn_spike_exchange() {
 	n = nrnmpi_spike_exchange();
 	wt_ = nrnmpi_wtime() - wt;
 	wt = nrnmpi_wtime();
+	TBUF
+#if TBUFSIZE
+	tbuf_[itbuf_++] = (unsigned long)0;
+	tbuf_[itbuf_++] = (unsigned long)nout_;
+	tbuf_[itbuf_++] = (unsigned long)n;
+#endif
+
 	errno = 0;
 //if (n > 0) {
 //printf("%d nrn_spike_exchange sent %d received %d\n", nrnmpi_myid, nout_, n);
@@ -486,6 +522,7 @@ void nrn_spike_exchange() {
 #if NRNSTAT
 		if (max_histogram_) { vector_vec(max_histogram_)[0] += 1.; }
 #endif
+		TBUF
 		return;
 	}
 #if NRNSTAT
@@ -537,10 +574,17 @@ void nrn_spike_exchange() {
 		}
 	}
 	wt1_ = nrnmpi_wtime() - wt;
+	TBUF
 }
 		
 void nrn_spike_exchange_compressed() {
 	if (!active_) { return; }
+	TBUF
+	TBUF
+#if TBUFSIZE
+	nrnmpi_barrier();
+#endif
+	TBUF
 	assert(!cvode_active_);
 	double wt;
 	int i, n, idx;
@@ -556,6 +600,12 @@ void nrn_spike_exchange_compressed() {
 	n = nrnmpi_spike_exchange_compressed();
 	wt_ = nrnmpi_wtime() - wt;
 	wt = nrnmpi_wtime();
+	TBUF
+#if TBUFSIZE             
+        tbuf_[itbuf_++] = (unsigned long)0;
+        tbuf_[itbuf_++] = (unsigned long)nout_;
+        tbuf_[itbuf_++] = (unsigned long)n;
+#endif
 	errno = 0;
 //if (n > 0) {
 //printf("%d nrn_spike_exchange sent %d received %d\n", nrnmpi_myid, nout_, n);
@@ -567,6 +617,7 @@ void nrn_spike_exchange_compressed() {
 		if (max_histogram_) { vector_vec(max_histogram_)[0] += 1.; }
 #endif
 		t_exchange_ = nrn_threads->_t;
+		TBUF
 		return;
 	}
 #if NRNSTAT
@@ -668,6 +719,7 @@ void nrn_spike_exchange_compressed() {
     }
 	t_exchange_ = nrn_threads->_t;
 	wt1_ = nrnmpi_wtime() - wt;
+	TBUF
 }
 
 static void mk_localgid_rep() {
@@ -736,7 +788,11 @@ static void mk_localgid_rep() {
 		ngid = *(sbuf++);
 		for (k=0; k < ngid; ++k) {
 			if (gid2in_ && gid2in_->find(int(sbuf[k]), ps)) {
+#if ALTHASH
+				localmaps_[i]->insert(k, ps);
+#else
 				(*localmaps_[i])[k] = ps;
+#endif
 			}
 		}
 	}
@@ -782,8 +838,13 @@ void nrn_fake_fire(int gid, double spiketime, int fake_out) {
 static void alloc_space() {
 	if (!gid2out_) {
 		netcon_sym_ = hoc_lookup("NetCon");
+#if ALTHASH
+		gid2out_ = new Gid2PreSyn(1000);
+		gid2in_ = new Gid2PreSyn(500000);
+#else
 		gid2out_ = new Gid2PreSyn(211);
 		gid2in_ = new Gid2PreSyn(2311);
+#endif
 #if NRNMPI
 		ocapacity_  = 100;
 		spikeout_ = (NRNMPI_Spike*)hoc_Emalloc(ocapacity_*sizeof(NRNMPI_Spike)); hoc_malchk();
@@ -808,7 +869,11 @@ void BBS::set_gid2node(int gid, int nid) {
 //printf("gid %d defined on %d\n", gid, nrnmpi_myid);
 		PreSyn* ps;
 		assert(!(gid2in_->find(gid, ps)));
+#if ALTHASH
+		gid2out_->insert(gid, nil);
+#else
 		(*gid2out_)[gid] = nil;
+#endif
 //		gid2out_->insert(pair<const int, PreSyn*>(gid, nil));
 	}
 }
@@ -840,6 +905,9 @@ void nrnmpi_gid_clear(int arg) {
 				delete ps;
 			}
 		}
+#if ALTHASH
+                gid2out_->remove(i__.cur_key());
+#endif
 	}}}
 	NrnHashIterate(Gid2PreSyn, gid2in_, PreSyn*, ps) {
 		ps->gid_ = -1;
@@ -847,7 +915,11 @@ void nrnmpi_gid_clear(int arg) {
 		if (ps->dil_.count() == 0) {
 			delete ps;
 		}
+#if ALTHASH
+                gid2in_->remove(i__.cur_key());
+#endif
 	}}}
+#if !ALTHASH
 	int i;
 	for (i = gid2out_->size_ - 1; i >= 0; --i) {
 		gid2out_->at(i).clear();
@@ -855,6 +927,7 @@ void nrnmpi_gid_clear(int arg) {
 	for (i = gid2in_->size_ - 1; i >= 0; --i) {
 		gid2in_->at(i).clear();
 	}
+#endif
 }
 
 int BBS::gid_exists(int gid) {
@@ -893,7 +966,11 @@ void BBS::cell() {
 	NetCon* nc = (NetCon*)ob->u.this_pointer;
 	ps = nc->src_;
 //printf("%d cell %d %s\n", nrnmpi_myid, gid, hoc_object_name(ps->ssrc_ ? nrn_sec2cell(ps->ssrc_) : ps->osrc_));
+#if ALTHASH
+	gid2out_->insert(gid, ps);
+#else
 	(*gid2out_)[gid] = ps;
+#endif
 	ps->gid_ = gid;
 	if (ifarg(3) && !chkarg(3, 0., 1.)) {
 		ps->output_index_ = -2; //prevents destruction of PreSyn
@@ -971,7 +1048,11 @@ Object** BBS::gid_connect(int gid) {
 //printf("%d connect %s from new PreSyn for %d\n", nrnmpi_myid, hoc_object_name(target), gid);
 		ps = new PreSyn(nil, nil, nil);
 		net_cvode_instance->psl_append(ps);
+#if ALTHASH
+		gid2in_->insert(gid, ps);
+#else
 		(*gid2in_)[gid] = ps;
+#endif
 		ps->gid_ = gid;
 	}
 	NetCon* nc;
@@ -1135,9 +1216,16 @@ IvocVect* BBS::netpar_max_histogram(IvocVect* mh) {
 int nrnmpi_spike_compress(int nspike, boolean gid_compress, int xchng_meth) {
 #if NRNMPI
 	if (nrnmpi_numprocs < 2) { return 0; }
+#if BGP_INTERVAL == 2
+	n_bgp_interval = (xchng_meth & 2) ? 2 : 1;
+#endif
 #if BGPDMA
-	use_bgpdma_ = (xchng_meth == 1) ? 1 : 0;
+	use_bgpdma_ = (xchng_meth > 0) ? 1 : 0;
 	if (nrnmpi_myid == 0) {printf("use_bgpdma_ = %d\n", use_bgpdma_);}
+#if HAVE_DCMF_RECORD_REPLAY
+	use_dcmf_record_replay = (xchng_meth & 4) ? 1 : 0;
+	if (nrnmpi_myid == 0) {printf("use_dcmf_record_replay = %d\n", use_dcmf_record_replay);}
+#endif
 #endif
 	if (nspike >= 0) {
 		ag_send_nspike_ = 0;
@@ -1187,9 +1275,3 @@ printf("Notice: gid compression did not succeed. Probably more than 255 cells on
 	return 0;
 #endif
 }
-
-#if BGPDMA
-#include "bgpdma.cpp"
-#endif
-
-
