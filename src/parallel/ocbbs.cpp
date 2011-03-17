@@ -29,6 +29,7 @@ extern "C" {
 	extern int nrnmpi_spike_compress(int nspike, boolean gid_compress, int xchng_meth);
 	extern int nrnmpi_splitcell_connect(int that_host);
 	extern int nrnmpi_multisplit(double x, int sid, int backbonestyle);
+	extern int nrn_set_timeout(int timeout);
 	extern void nrnmpi_gid_clear(int);
 	double nrnmpi_rtcomp_time_;
 	extern double nrn_bgp_receive_time(int);
@@ -470,7 +471,7 @@ static double step_time(void* v) {
 }
 
 static double send_time(void* v) {
-	int arg = ifarg(1) ? int(chkarg(1, 0, 10)) : 0;
+	int arg = ifarg(1) ? int(chkarg(1, 0, 20)) : 0;
 	if (arg) {
 		return nrn_bgp_receive_time(arg);
 	}
@@ -518,7 +519,7 @@ static double spcompress(void* v) {
 		gid_compress = (chkarg(2, 0, 1) ? true : false);
 	}
 	if (ifarg(3)) {
-		xchng_meth = (int)chkarg(3, 0, 1);
+		xchng_meth = (int)chkarg(3, 0, 15);
 	}
 	return (double)nrnmpi_spike_compress(nspike, gid_compress, xchng_meth);
 }
@@ -547,10 +548,19 @@ static double multisplit(void* v) {
 	return 0.;
 }
 
+static double set_timeout(void* v) {
+	int arg = 0;
+	if (ifarg(1)){
+		arg = int(chkarg(1, 0, 10000));
+	}
+	arg = nrn_set_timeout(arg);
+	return double(arg);
+}
+
 static double gid_clear(void* v) {
 	int arg = 0;
 	if (ifarg(1)){
-		arg = int(chkarg(1, 0, 3));
+		arg = int(chkarg(1, 0, 4));
 	}
 	nrnmpi_gid_clear(arg);
 	return 0.;
@@ -906,6 +916,7 @@ static Member_func members[] = {
 	"integ_time", integ_time,
 	"vtransfer_time", vtransfer_time,
 	"mech_time", mech_time,
+	"timeout", set_timeout,
 
 	"set_gid2node", set_gid2node,
 	"gid_exists", gid_exists,
