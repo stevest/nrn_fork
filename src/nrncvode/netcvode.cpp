@@ -106,7 +106,7 @@ extern void nrn_update_ps2nt();
 extern void nrn_use_busywait(int);
 extern double* nrn_recalc_ptr(double*);
 void* nrn_interthread_enqueue(NrnThread*);
-extern void (*nrnmpi_v_transfer_)(NrnThread*);
+extern void (*nrnthread_v_transfer_)(NrnThread*);
 #if NRN_MUSIC
 extern void nrnmusic_injectlist(void*, double);
 #endif
@@ -2102,8 +2102,6 @@ ENDGUI
 	}else{
 		nt_t += 1e9;
 	}
-	t = nt_t;
-	dt = nt_dt;
 	return err;
 }
 
@@ -3595,11 +3593,13 @@ void ncs2nrn_integrate(double tstop) {
 #endif
 		{
 			net_cvode_instance->solve(tstop);
+			t = nt_t;
+			dt = nt_dt;
 		}
 	}else{
 #if 1
 	    int n = (int)((tstop - nt_t)/dt + 1e-9);
-	    if (n > 3 && !nrnmpi_v_transfer_) {
+	    if (n > 3 && !nrnthread_v_transfer_) {
 		nrn_fixed_step_group(n);
 	    }else
 #endif
@@ -4429,7 +4429,7 @@ void NetCvode::presyn_disconnect(PreSyn* ps) {
 		ps->thvar_ = nil;
 	}
 	if (gcv_) {
-		for (int it = 0; it < nrn_nthread; ++it) {
+		for (int it = 0; it < gcv_->nctd_; ++it) {
 			PreSynList* psl = gcv_->ctd_[it].psl_th_;
 			if (psl) for (int j = 0; j < psl->count(); ++j) {
 				if (psl->item(j) == ps) {
