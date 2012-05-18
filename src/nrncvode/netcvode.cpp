@@ -26,6 +26,7 @@
 #include "objcmd.h"
 #include "shared/sundialsmath.h"
 #include "kssingle.h"
+#include "ocnotify.h"
 #if HAVE_IV
 #include "ivoc.h"
 #endif
@@ -4770,14 +4771,11 @@ PreSyn::PreSyn(double* src, Object* osrc, Section* ssrc) {
 	music_port_ = 0;
 #endif
 #if DISCRETE_EVENT_OBSERVER
-#if HAVE_IV
-	Oc oc;
 	if(thvar_) {
-		oc.notify_when_freed(thvar_, this);
+		nrn_notify_when_double_freed(thvar_, this);
 	}else if (osrc_) {
-		oc.notify_when_freed(osrc_, this);
+		nrn_notify_when_void_freed(osrc_, this);
 	}
-#endif
 #endif
 }
 
@@ -4800,10 +4798,7 @@ PreSyn::~PreSyn() {
 #endif
 	if (thvar_ || osrc_) {
 #if DISCRETE_EVENT_OBSERVER
-#if HAVE_IV
-		Oc oc;
-		oc.notify_pointer_disconnect(this);
-#endif
+		nrn_notify_pointer_disconnect(this);
 #endif
 		if (!thvar_) {
 			Point_process* pnt = ob2pntproc(osrc_);
@@ -4996,12 +4991,9 @@ if (dil_.item(i)->obj_) {
 }
 
 void PreSyn::update_ptr(double* pd) {
-#if HAVE_IV
 #if DISCRETE_EVENT_OBSERVER
-	Oc oc;
-	oc.notify_pointer_disconnect(this);
-	oc.notify_when_freed(pd, this);
-#endif
+	nrn_notify_pointer_disconnect(this);
+	nrn_notify_when_double_freed(pd, this);
 #endif
 	thvar_ = pd;
 }
@@ -5484,12 +5476,9 @@ PlayRecord::PlayRecord(double* pd, Object* ppobj) {
 	pd_ = pd;
 	cvode_ = nil;
 	ith_ = 0;
-#if HAVE_IV
-	Oc oc;
 	if (pd_) {
-		oc.notify_when_freed(pd_, this);
+		nrn_notify_when_double_freed(pd_, this);
 	}
-#endif
 	ppobj_ = ppobj;
 	if (ppobj_) {
 		ObjObservable::Attach(ppobj_, this);
@@ -5499,10 +5488,7 @@ PlayRecord::PlayRecord(double* pd, Object* ppobj) {
 
 PlayRecord::~PlayRecord() {
 //printf("PlayRecord::~PlayRecord %p\n", this);
-#if HAVE_IV
-	Oc oc;
-	oc.notify_pointer_disconnect(this);
-#endif
+	nrn_notify_pointer_disconnect(this);
 	if (ppobj_) {
 		ObjObservable::Detach(ppobj_, this);
 	}
@@ -5510,11 +5496,8 @@ PlayRecord::~PlayRecord() {
 }
 
 void PlayRecord::update_ptr(double* pd) {
-#if HAVE_IV
-	Oc oc;
-	oc.notify_pointer_disconnect(this);
-	oc.notify_when_freed(pd, this);
-#endif
+	nrn_notify_pointer_disconnect(this);
+	nrn_notify_when_double_freed(pd, this);
 	pd_ = pd;
 }
 
