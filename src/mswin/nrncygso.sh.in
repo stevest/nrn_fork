@@ -1,0 +1,237 @@
+#!/bin/sh
+
+set -x
+
+#all the .o files
+find .. -name \*.o -print | sed '
+/\/modlunit\//d
+/\/nmodl\//d
+/\/e_editor\//d
+/\/ivoc\/classreg\.o/d
+/\/ivoc\/datapath\.o/d
+/\/ivoc\/nrnmain\.o/d
+/\/ivoc\/ocjump\.o/d
+/\/ivoc\/symdir\.o/d
+/\/ivoc\/\.libs\/ivocman1\.o/d
+@BUILD_MINGW_TRUE@/\/nrnpython\/\.libs\/.*\.o/d
+/\/nrnoc\/cprop\.o/d
+/\/oc\/\.libs\/code\.o/d
+/\/oc\/\.libs\/hoc_init\.o/d
+/\/oc\/\.libs\/hoc_oop\.o/d
+/\/oc\/\.libs\/hocusr\.o/d
+/\/oc\/\.libs\/plt\.o/d
+/\/oc\/\.libs\/settext\.o/d
+/\/oc\/\.libs\/spinit\.o/d
+/\/oc\/\.libs\/spinit1\.o/d
+/\/oc\/\.libs\/spinit2\.o/d
+/\/memacs\/\.libs\/termio\.o/d
+/\/memacs\/main\.o/d
+/\/nvkludge\.o/d
+/\/nocable\.o/d
+/\/nrnnoiv\.o/d
+/\/ockludge\.o/d
+/\/ocnoiv\.o/d
+/\/ocmain\.o/d
+/\/inithoc\.o/d
+' > temp
+
+mpicc=@MPICC@
+
+if test "$mpicc" = "mpicc" ; then
+mpich=`which $mpicc | sed "s,/bin/.*,,"`
+echo "mpich=$mpich"
+# mpich configured and made with
+#./configure --prefix=/home/Hines/mpich2 --with-pm=gforker:mpd \
+#  'CFLAGS=-DDLL_EXPORT -DPIC' 'CXXFLAGS=-DDLL_EXPORT -DPIC' \
+#  'LDFLAGS=-Wl,--enable-auto-import'
+#make >& build.stdout
+#make install
+# note that $mpich is the build directory that contains build.stdout
+
+awk '
+/Entering directory/ { d = $4 }
+/ar cr/ { for (i=4; i <= NF; ++i) {
+	printf("%s/%s\n", d, $i)
+}}
+' $mpich/build.stdout | sed "s/'//
+	s/\`//
+	/\.no$/d
+	/\.po$/d
+	/\/hydra\/d
+	/\/c++\//d
+	/\/mpe2\//d
+	/\/binding\/f77\//d
+	"'$a \
+'$mpich/src/binding/f77/setbot.o'
+' >> temp
+
+fi
+
+@BUILD_MINGW_TRUE@mingw='yes'
+@BUILD_MINGW_FALSE@mingw='no'
+@BUILD_NRNPYTHON_TRUE@nrnpy='yes'
+@BUILD_NRNPYTHON_DYNAMIC_TRUE@nrnpy='yes'
+@BUILD_NRNPYTHON_FALSE@@BUILD_NRNPYTHON_DYNAMIC_FALSE@nrnpy='no'
+@BUILD_NRNJAVA_TRUE@nrnjvm='yes'
+@BUILD_NRNJAVA_FALSE@nrnjvm='no'
+
+#sed 's,^.*/,,' temp |sort|uniq -d
+obj=`cat temp`
+
+CXX=@CXX@
+
+echo IVLIBDIR=\"${IVLIBDIR}\"
+echo CFLAGS=\"${CFLAGS}\"
+echo LDFLAGS=\"${LDFLAGS}\"
+
+if test "$CFLAGS" != "-mno-cygwin" ; then
+
+if test "$mingw" = "no" ; then
+
+echo 'make nrniv.dll for mingw under cygwin'
+$CXX -shared $obj \
+  -L${IVLIBDIR} -lIVhines \
+  -lcygwin -luser32 -lkernel32 -ladvapi32 -lshell32 \
+  $LIBS \
+  @NRNPYTHON_PYLIBLINK@ \
+  -lgdi32 -lcomdlg32 -lncurses -lm \
+  -o nrniv.dll \
+  -Wl,--enable-auto-image-base \
+  ${LDFLAGS} \
+  -Xlinker --out-implib -Xlinker libnrniv.dll.a
+
+if test $nrnpy = 'yes' ; then
+  
+echo 'make nrnpython27.dll'
+$CXX -shared ../nrnpython/.libs/*.o -L. -lnrniv -o nrnpython27.dll \
+   -L/c/Python27/libs -lpython27 \
+   -L${IVLIBDIR} -lIVhines \
+   -lreadline \
+   -Wl,--enable-auto-image-base \
+   ${LDFLAGS} \
+   -Xlinker --out-implib -Xlinker libnrnpython27.dll.a
+
+echo 'make hocmodule.dll'
+$CXX -shared \
+  ../nrnpython/.libs/inithoc.o \
+  -L. -lnrniv \
+  @NRNPYTHON_PYLIBLINK@ \
+  -o hocmodule.dll \
+  -Wl,--enable-auto-image-base \
+  ${LDFLAGS} \
+  -Xlinker --out-implib -Xlinker libhocmodule.dll.a
+
+LHOCMODULE='-lhocmodule'
+else
+LHOCMODULE=''
+fi
+
+echo 'make nrniv.exe'
+$CXX -g -O2 -mwindows -e _mainCRTStartup -o nrniv.exe \
+  ../ivoc/nrnmain.o ../oc/modlreg.o \
+  -L. -lnrniv \
+  $LHOCMODULE \
+  -lncurses \
+  -L${IVLIBDIR} -lIVhines \
+  -lstdc++ -lgdi32 -lcomdlg32 \
+  ${LDFLAGS} \
+  @NRNPYTHON_PYLIBLINK@
+
+fi # mingw = no
+
+if test "$mingw" = "yes" ; then
+
+echo 'make nrniv.dll for mingw under mingw'
+$CXX -shared $obj \
+  -L${IVLIBDIR} -lIVhines \
+  $LIBS \
+  @NRNPYTHON_PYLIBLINK@ \
+  -lreadline -ltermcap -lpthread \
+  -lgdi32 \
+  -o nrniv.dll \
+  -Wl,--enable-auto-image-base \
+  ${LDFLAGS} \
+  -Xlinker --out-implib -Xlinker libnrniv.dll.a
+
+if test $nrnpy = 'yes' ; then
+
+echo 'make libnrnpython@npy_apiver@.dll'
+$CXX -shared ../nrnpython/.libs/*.o -L. -lnrniv -o libnrnpython@npy_apiver@.dll \
+   -L/c/Python27/libs -lpython27 \
+   -L${IVLIBDIR} -lIVhines \
+   -lreadline \
+   -Wl,--enable-auto-image-base \
+   ${LDFLAGS} \
+   -Xlinker --out-implib -Xlinker libnrnpython@npy_apiver@.dll.a
+
+echo 'make hocmodule.dll'
+$CXX -shared \
+  ../nrnpython/.libs/inithoc.o \
+  -L. -lnrniv -lnrnpython@npy_apiver@\
+  -o hocmodule.dll \
+  -Wl,--enable-auto-image-base \
+  ${LDFLAGS} \
+  -Xlinker --out-implib -Xlinker libhocmodule.dll.a
+
+LHOCMODULE='-lhocmodule'
+else
+LHOCMODULE=''
+fi
+
+echo 'make nrniv.exe'
+
+$CXX -g -O2 -o nrniv.exe \
+  ../ivoc/nrnmain.o \
+  -L. -lnrniv \
+  ${LDFLAGS}
+
+#without msvcr90.dll and a manifest, cannot 'import numpy' from enthought.
+#To allow this,  create an alternative executable.
+manifest=Microsoft.VC90.CRT.manifest
+if test -f /c/Python27/$manifest ; then
+cp /c/Python27/$manifest .
+echo '#include "winuser.h"
+1 RT_MANIFEST '$manifest'
+' > msvcr.rc
+windres --input msvcr.rc --output msvcr.o
+
+$CXX -g -O2 -o nrniv_enthought.exe \
+  ../ivoc/nrnmain.o msvcr.o\
+  -L. -lnrniv \
+  ${LDFLAGS}
+
+fi # enthought manifest
+
+fi # mingw = yes
+
+else
+
+$CXX -shared -mno-cygwin $obj \
+  $LIBS -lstdc++ \
+  @NRNPYTHON_PYLIBLINK@ \
+  -o nrniv.dll \
+  -Wl,--enable-auto-image-base \
+  ${LDFLAGS} \
+  -Xlinker --out-implib -Xlinker libnrniv.dll.a
+
+$CXX -shared -mno-cygwin \
+  ../nrnpython/.libs/inithoc.o \
+  @NRNPYTHON_PYLIBLINK@ \
+  -L. -lnrniv -lstdc++ \
+  -o hocmodule.dll \
+  -Wl,--enable-auto-image-base \
+  ${LDFLAGS} \
+  -Xlinker --out-implib -Xlinker libhocmodule.dll.a
+
+$CXX -g -O2 -mno-cygwin -e _mainCRTStartup -o nrniv.exe \
+  ../ivoc/nrnmain.o ../oc/modlreg.o \
+  -L. -lnrniv -lstdc++ \
+  ${LDFLAGS} \
+  @NRNPYTHON_PYLIBLINK@
+
+fi
+
+#mv nrniv.exe c:/nrn61/bin
+#cd ..
+#mv hocmodule.dll c:/nrn61/bin
+
