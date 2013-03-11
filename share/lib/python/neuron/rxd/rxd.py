@@ -59,10 +59,24 @@ def _advance2():
     last_diam_change_cnt = _cvode_object.diam_change_count()
     
 def re_init():
-    """reinitializes all rxd concentrations to match HOC values"""
+    """reinitializes all rxd concentrations to match HOC values, updates matrices"""
+    h.define_shape()
+    
+    # update current pointers
+    section1d._purge_cptrs()
+    for sr in species._get_all_species().values():
+        s = sr()
+        if s is not None:
+            s._register_cptrs()
+    
+    # update matrix equations
+    _setup_matrices()
+        
     for sr in species._get_all_species().values():
         s = sr()
         if s is not None: s.re_init()
+    
+    _cvode_object.re_init()
 
 def _invalidate_matrices():
     # TODO: make a separate variable for this?
@@ -71,7 +85,7 @@ def _invalidate_matrices():
 
 def _do_imports():
     # TODO: is this really what I want? need it to keep cvode from misbehaving
-    if h.cvode.active(): return
+    if _cvode_object.active(): return
     global last_diam_change_cnt, last_structure_change_cnt, _linmodadd_b
 
     for sr in species._get_all_species().values():
@@ -92,7 +106,7 @@ def _do_imports():
             s = sr()
             if s is not None: s._register_cptrs()
 
-#        _cvode_object.re_init()
+        _cvode_object.re_init()
 
 
 def _setup_output_flux_ptrs():
@@ -253,7 +267,7 @@ def _setup_matrices():
             _linmodadd_cur = h.LinearMechanism(_linmodadd_cur_c, _linmodadd_cur_g, _linmodadd_cur_y, _linmodadd_cur_b, _cur_sec_list, _cur_x_list)
         else:
             _linmodadd_cur = None
-    
+    #_cvode_object.re_init()    
 
 def _init():
     # TODO: check about the 0<x<1 problem alluded to in the documentation
