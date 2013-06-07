@@ -12,8 +12,12 @@ import scipy.sparse.linalg
 import ctypes
 import atexit
 import options
+import region
 
 def byeworld():
+    # needed to prevent a seg-fault error at shudown in at least some
+    # combinations of NEURON and Python, which I think is due to objects
+    # getting deleted out-of-order
     global _react_matrix_solver
     del _react_matrix_solver
     
@@ -41,14 +45,6 @@ _diffusion_matrix = None
 _curr_scales = None
 _curr_ptrs = None
 _curr_indices = None
-
-_linmodadd_cur = None
-_linmodadd_cur_c = None
-_linmodadd_cur_g = None
-_linmodadd_cur_b = None
-_linmodadd_cur_y = None
-_cur_sec_list = None
-_cur_x_list = None
 
 _all_reactions = []
 
@@ -85,48 +81,33 @@ def re_init():
     """reinitializes all rxd concentrations to match HOC values, updates matrices"""
     h.define_shape()
     
-    # update current pointers
-    section1d._purge_cptrs()
-    for sr in species._get_all_species().values():
-        s = sr()
-        if s is not None:
-            s._register_cptrs()
+    dim = region._sim_dimension
     
-    # update matrix equations
-    _setup_matrices()
+    if dim == 1:
+        # update current pointers
+        section1d._purge_cptrs()
+        for sr in species._get_all_species().values():
+            s = sr()
+            if s is not None:
+                s._register_cptrs()
         
+        # update matrix equations
+        _setup_matrices()
+
+    elif dim != 3:            
+        raise Exception('unknown dimension')
     for sr in species._get_all_species().values():
         s = sr()
         if s is not None: s.re_init()
-    
+    # TODO: is this safe?        
     _cvode_object.re_init()
+
 
 def _invalidate_matrices():
     # TODO: make a separate variable for this?
     global last_structure_change_cnt, _diffusion_matrix
     _diffusion_matrix = None
     last_structure_change_cnt = None
-
-def _setup_output_flux_ptrs():
-    global _output_curr_valences, _output_curr_ptrs
-    _output_curr_valences = []
-    _output_curr_ptrs = []
-    states = numpy.array(node._get_states())
-    for rptr in _all_reactions:
-        r = rptr()
-        if r:
-            memb_flux = r._get_memb_flux(states)
-            if memb_flux:
-                # TODO: check sign; might be reversed
-                for sign, sources in zip([1, -1], [r._sources, r._dests]):
-                    for source in sources:
-                        name = '_ref_i%s' % (source._species().name)
-                        charge = source._species().charge
-                        for sec in r._regions[0].secs:
-                            for i in xrange(sec.nseg):
-                                _output_curr_ptrs.append(sec._sec((i + 0.5) / sec.nseg).__getattribute__(name))
-                            _output_curr_valences += [charge * sign] * sec.nseg
-    _output_curr_valences = numpy.array(_output_curr_valences)
 
 _rxd_offset = None
 
@@ -137,9 +118,12 @@ def _ode_count(offset):
     return len(_nonzero_volume_indices)
 
 def _ode_reinit(y):
+    if region._sim_dimension == 3: raise Exception('cvode not supported yet for 3D')
     y[_rxd_offset : _rxd_offset + len(_nonzero_volume_indices)] = node._get_states()[_nonzero_volume_indices]
 
 def _ode_fun(t, y, ydot):
+    current_dimension = region._sim_dimension
+    if region._sim_dimension == 3: raise Exception('cvode not supported yet for 3D')
     lo = _rxd_offset
     hi = lo + len(_nonzero_volume_indices)
     if lo == hi: return
@@ -168,8 +152,16 @@ def _ode_fun(t, y, ydot):
         if d:
             states[i] = -v / d
     """
-    # TODO: refactor so this isn't in section1d
-    section1d._transfer_to_legacy()        
+    if region._sim_dimension == 1:
+        # TODO: refactor so this isn't in section1d?
+        section1d._transfer_to_legacy()        
+    elif region._sim_dimension == 3:
+        for sr in species._get_all_species().values():
+            s = sr()
+            if s is not None: s._transfer_to_legacy()
+    else:
+        raise Exception('unknown dimension')
+
     
     if ydot is not None:
         # diffusion_matrix = - jacobian    
@@ -189,53 +181,106 @@ def _ode_solve(dt, t, b, y):
     #b[lo : hi] = _diffusion_matrix_solve(dt, full_b)[_nonzero_volume_indices]
 
 
-def _fixed_step_currents(rhs):
+_rxd_induced_currents = None
+
+def _currents(rhs):
     # setup membrane fluxes from our stuff
+    # TODO: cache the memb_cur_ptrs, memb_cur_charges, memb_net_charges, memb_cur_mapped
+    #       because won't change very often
+    global _rxd_induced_currents
+
+    # need this; think it's because of initialization of mod files
+    if _curr_indices is None: return
+
+    # TODO: change so that this is only called when there are in fact currents
+    _rxd_induced_currents = numpy.zeros(len(_curr_indices))
     rxd_memb_flux = []
+    memb_cur_ptrs = []
+    memb_cur_charges = []
+    memb_net_charges = []
+    memb_cur_mapped = []
     for rptr in _all_reactions:
         r = rptr()
         if r and r._membrane_flux:
-            rxd_memb_flux += list(r._get_memb_flux(states)) * (len(r._sources) + len(r._dests))
-            raise Exception('rxd_memb_flux not yet supported')
+            # NOTE: memb_flux contains any scaling we need
+            new_fluxes = r._get_memb_flux(node._get_states())
+            rxd_memb_flux += list(new_fluxes)
+            memb_cur_ptrs += r._cur_ptrs
+            memb_cur_mapped += r._cur_mapped
+            memb_cur_charges += [r._cur_charges] * len(new_fluxes)
+            memb_net_charges += [r._net_charges] * len(new_fluxes)
+
+    # TODO: is this in any way dimension dependent?
 
     if rxd_memb_flux:
-        _linmodadd_cur_b.from_python(rxd_memb_flux)
-        rxd_memb_flux = _output_curr_valences * rxd_memb_flux
-        for ptr, cur in zip(_output_curr_ptrs, rxd_memb_flux):
-            ptr[0] += cur
-
+        # TODO: remove the asserts when this is verified to work
+        assert(len(rxd_memb_flux) == len(_cur_node_indices))
+        assert(len(rxd_memb_flux) == len(memb_cur_ptrs))
+        assert(len(rxd_memb_flux) == len(memb_cur_charges))
+        assert(len(rxd_memb_flux) == len(memb_net_charges))
+        for flux, cur_ptrs, cur_charges, net_charge, i, cur_maps in zip(rxd_memb_flux, memb_cur_ptrs, memb_cur_charges, memb_net_charges, _cur_node_indices, memb_cur_mapped):
+            rhs[i] -= net_charge * flux
+            #print net_charge * flux
+            #import sys
+            #sys.exit()
+            # TODO: remove this assert when more thoroughly tested
+            assert(len(cur_ptrs) == len(cur_maps))
+            for ptr, charge, cur_map_i in zip(cur_ptrs, cur_charges, cur_maps):
+                # this has the opposite sign of the above because positive
+                # currents lower the membrane potential
+                cur = charge * flux
+                ptr[0] += cur
+                for sign, c in zip([-1, 1], cur_maps):
+                    if c is not None:
+                        _rxd_induced_currents[c] += sign * cur
 
 preconditioner = None
 def _fixed_step_solve(dt):
-    global preconditioner
+    global preconditioner, pinverse
 
-    # TODO: use linear approx not constant approx
     states = node._get_states()[:]
 
     b = _rxd_reaction(states)
     
-    states[:] = _reaction_matrix_solve(dt, _diffusion_matrix_solve(dt, states + dt * b))
+    dim = region._sim_dimension
+    if dim is None:
+        return
+    elif dim == 1:
+        states[:] = _reaction_matrix_solve(dt, _diffusion_matrix_solve(dt, states + dt * b))
 
-    # clear the zero-volume "nodes"
-    states[_zero_volume_indices] = 0
+        # clear the zero-volume "nodes"
+        states[_zero_volume_indices] = 0
 
-    # TODO: refactor so this isn't in section1d... probably belongs in node
-    section1d._transfer_to_legacy()
+        # TODO: refactor so this isn't in section1d... probably belongs in node
+        section1d._transfer_to_legacy()
+    elif dim == 3:
+        # the actual advance via implicit euler
+        n = len(states)
+        m = scipy.sparse.eye(n, n) - dt * _euler_matrix
+        # TODO: pinverse should be updated whenever dt changes
+        if pinverse is not None:
+            pinverse = scipy.sparse.diags([[1. / m.diagonal()]], [0], shape=(n, n), format='csr', dtype='d')
+        #result, info = scipy.sparse.linalg.bicgstab(m, states + dt * b, M=pinverse)
+        result, info = scipy.sparse.linalg.bicgstab(m, states, M=pinverse)
+        result += dt * b
+        assert(info == 0)
+        states[:] = result
+
+        for sr in species._get_all_species().values():
+            s = sr()
+            if s is not None: s._transfer_to_legacy()
+        
 
 def _rxd_reaction(states):
     # TODO: this probably shouldn't be here
     # TODO: this was included in the 3d, probably shouldn't be there either
-    if _diffusion_matrix is None: _setup_matrices()
+    if _diffusion_matrix is None and region._sim_dimension == 1: _setup_matrices()
 
     b = numpy.zeros(len(states))
-    # TODO: this isn't yet (2013-03-14) in 3D, but needs to be
-    # membrane fluxes from classic NEURON
-    #print 'indices:', _curr_indices
-    #print 'ptrs:', _curr_ptrs
     
     if _curr_ptr_vector is not None:
         _curr_ptr_vector.gather(_curr_ptr_storage_nrn)
-        b[_curr_indices] = _curr_scales * _curr_ptr_storage
+        b[_curr_indices] = _curr_scales * (_curr_ptr_storage + _rxd_induced_currents)
     
     #b[_curr_indices] = _curr_scales * [ptr[0] for ptr in _curr_ptrs]
 
@@ -258,6 +303,7 @@ _diffusion_a = None
 _diffusion_b = None
 _diffusion_p = None
 _c_diagonal = None
+_cur_node_indices = None
 
 _diffusion_a_ptr, _diffusion_b_ptr, _diffusion_p_ptr = None, None, None
 
@@ -380,26 +426,31 @@ def _ode_jacobian(dt, t, ypred, fpred):
     #print '_ode_jacobian: dt = %g, last_dt = %r' % (dt, _last_dt)
     _reaction_matrix_setup(dt, fpred)
 
-_callbacks = [_setup, None, _fixed_step_currents, _conductance, _fixed_step_solve,
+_callbacks = [_setup, None, _currents, _conductance, _fixed_step_solve,
               _ode_count, _ode_reinit, _ode_fun, _ode_solve, _ode_jacobian, None]
 nbs.register(_callbacks)
 
 _curr_ptr_vector = None
 _curr_ptr_storage = None
 _curr_ptr_storage_nrn = None
+pinverse = None
+_cur_map = None
 
 def _update_node_data(force=False):
-    global last_diam_change_cnt, last_structure_change_cnt, _curr_indices, _curr_scales, _curr_ptrs
+    global last_diam_change_cnt, last_structure_change_cnt, _curr_indices, _curr_scales, _curr_ptrs, _cur_map
     global _curr_ptr_vector, _curr_ptr_storage, _curr_ptr_storage_nrn
     if last_diam_change_cnt != _cvode_object.diam_change_count() or _cvode_object.structure_change_count() != last_structure_change_cnt or force:
+        _cur_map = {}
         last_diam_change_cnt = _cvode_object.diam_change_count()
         last_structure_change_cnt = _cvode_object.structure_change_count()
-        for sr in species._get_all_species().values():
-            s = sr()
-            if s is not None: s._update_node_data()
-        for sr in species._get_all_species().values():
-            s = sr()
-            if s is not None: s._update_region_indices()
+        if region._sim_dimension == 1:
+            # TODO: merge this with the 3d case
+            for sr in species._get_all_species().values():
+                s = sr()
+                if s is not None: s._update_node_data()
+            for sr in species._get_all_species().values():
+                s = sr()
+                if s is not None: s._update_region_indices()
         for rptr in _all_reactions:
             r = rptr()
             if r is not None: r._update_indices()
@@ -408,7 +459,7 @@ def _update_node_data(force=False):
         _curr_ptrs = []
         for sr in species._get_all_species().values():
             s = sr()
-            if s is not None: s._setup_currents(_curr_indices, _curr_scales, _curr_ptrs)
+            if s is not None: s._setup_currents(_curr_indices, _curr_scales, _curr_ptrs, _cur_map)
         
         num = len(_curr_ptrs)
         if num:
@@ -424,121 +475,123 @@ def _update_node_data(force=False):
         _curr_scales = numpy.array(_curr_scales)        
         
 
+_euler_matrix = None
+
 # TODO: make sure this does the right thing when the diffusion constant changes between two neighboring nodes
 def _setup_matrices():
-    global _linmodadd, _linmodadd_c, _diffusion_matrix, _linmodadd_b, _last_dt, _c_diagonal
-    global _linmodadd_cur, _linmodadd_cur_c, _linmodadd_cur_g, _linmodadd_cur_b, _cur_sec_list, _cur_x_list, _linmodadd_cur_y
-    
-    _last_dt = None
-    _c_diagonal = None
-    
-    for sr in species._get_all_species().values():
-        s = sr()
-        if s is not None:
-            s._assign_parents()
-    
-    _update_node_data(True)
+    global _linmodadd, _linmodadd_c, _diffusion_matrix, _linmodadd_b, _last_dt, _c_diagonal, _euler_matrix
+    global _cur_node_indices
 
-    # remove old linearmodeladdition
-    _linmodadd = None
-    _linmodadd_cur = None
-    
+
     n = len(node._get_states())
-    
-    if n:        
-        # create sparse matrix for C in cy'+gy=b
-        _linmodadd_c = scipy.sparse.dok_matrix((n, n))
-        # most entries are 1 except those corresponding to the 0 and 1 ends
         
+    if region._sim_dimension == 3:
+        _euler_matrix = scipy.sparse.dok_matrix((n, n), dtype=float)
+
+        for sr in species._get_all_species().values():
+            s = sr()
+            if s is not None: s._setup_matrices3d(_euler_matrix)
+
+        _euler_matrix = _euler_matrix.tocsr()
+
+        _update_node_data(True)
         
-        # create the matrix G
-        _diffusion_matrix = scipy.sparse.dok_matrix((n, n))
+
+    else:
+        # TODO: initialization is slow. track down why
+        
+        _last_dt = None
+        _c_diagonal = None
+        
         for sr in species._get_all_species().values():
             s = sr()
             if s is not None:
-                s._setup_diffusion_matrix(_diffusion_matrix)
-                s._setup_c_matrix(_linmodadd_c)
+                s._assign_parents()
         
-        # modify C for cases where no diffusive coupling of 0, 1 ends
-        # TODO: is there a better way to handle no diffusion?
-        for i in xrange(n):
-            if not _diffusion_matrix[i, i]:
-                _linmodadd_c[i, i] = 1
+        _update_node_data(True)
 
+        # remove old linearmodeladdition
+        _linmodadd = None
+        _linmodadd_cur = None
         
-        # and the vector b
-        _linmodadd_b = h.Vector(n)
+        if n:        
+            # create sparse matrix for C in cy'+gy=b
+            _linmodadd_c = scipy.sparse.dok_matrix((n, n))
+            # most entries are 1 except those corresponding to the 0 and 1 ends
+            
+            
+            # create the matrix G
+            _diffusion_matrix = scipy.sparse.dok_matrix((n, n))
+            for sr in species._get_all_species().values():
+                s = sr()
+                if s is not None:
+                    s._setup_diffusion_matrix(_diffusion_matrix)
+                    s._setup_c_matrix(_linmodadd_c)
+            
+            # modify C for cases where no diffusive coupling of 0, 1 ends
+            # TODO: is there a better way to handle no diffusion?
+            for i in xrange(n):
+                if not _diffusion_matrix[i, i]:
+                    _linmodadd_c[i, i] = 1
 
-        #print 'c:'
-        #for i in xrange(n):
-        #    print ' '.join('%10g' % _linmodadd_c.getval(i, j) for j in xrange(n))
+            
+            # and the vector b
+            _linmodadd_b = h.Vector(n)
 
-        
-        #print 'g:'
-        #for i in xrange(n):
-        #    print ' '.join('%10g' % _diffusion_matrix.getval(i, j) for j in xrange(n))
-                
-        
-        # and finally register everything with NEURON
-        #_linmodadd = h.LinearMechanism(_linmodadd_c, _diffusion_matrix, node._get_states(), node._get_states(), _linmodadd_b)
-        
-        # add the LinearMechanism for the membrane fluxes (if any)
-        _cur_sec_list = h.SectionList()
-        _cur_x_list = h.Vector()
+            
+            # setup for induced membrane currents
+            _cur_node_indices = []
 
-        for rptr in _all_reactions:
-            r = rptr()
-            if r is not None:
-                r._setup_membrane_fluxes(_cur_sec_list, _cur_x_list)
-        
-        cur_size = _cur_x_list.size()
-        if cur_size:
-            raise Exception('membrane fluxes not yet supported')
-            _linmodadd_cur_b = h.Vector(cur_size)
-            _linmodadd_cur_c = scipy.sparse.dok_matrix((cur_size, cur_size))
-            _linmodadd_cur_g = scipy.sparse.dok_matrix((cur_size, cur_size))
-            # this gets copies of membrane potentials; don't currently use them
-            # except in that LinearMechanism requires a place to store them
-            _linmodadd_cur_y = h.Vector(cur_size)
-            _linmodadd_cur = h.LinearMechanism(_linmodadd_cur_c, _linmodadd_cur_g, _linmodadd_cur_y, _linmodadd_cur_b, _cur_sec_list, _cur_x_list)
-        else:
-            _linmodadd_cur = None
-    
-        #_cvode_object.re_init()    
+            for rptr in _all_reactions:
+                r = rptr()
+                if r is not None:
+                    r._setup_membrane_fluxes(_cur_node_indices, _cur_map)
+                    
+            #_cvode_object.re_init()    
 
-        _linmodadd_c = _linmodadd_c.tocsr()
-        _diffusion_matrix = _diffusion_matrix.tocsr()
-        
-    global _zero_volume_indices, _nonzero_volume_indices
-    volumes = node._get_data()[0]
-    _zero_volume_indices = numpy.where(volumes == 0)[0]
-    _nonzero_volume_indices = volumes.nonzero()[0]
+            _linmodadd_c = _linmodadd_c.tocsr()
+            _diffusion_matrix = _diffusion_matrix.tocsr()
+            
+        global _zero_volume_indices, _nonzero_volume_indices
+        volumes = node._get_data()[0]
+        _zero_volume_indices = numpy.where(volumes == 0)[0]
+        _nonzero_volume_indices = volumes.nonzero()[0]
 
-    if n:
-        matrix = _diffusion_matrix[_zero_volume_indices].todok()
-        for row, i in enumerate(_zero_volume_indices):
-            d = _diffusion_matrix[i, i]
-            if d:
-                matrix[row, :] /= -d
-                matrix[row, i] = 0
-            else:
-                matrix[row, :] = 0
-        global _mat_for_zero_volume_nodes
-        _mat_for_zero_volume_nodes = matrix.tocsr()
+        if n:
+            matrix = _diffusion_matrix[_zero_volume_indices].todok()
+            for row, i in enumerate(_zero_volume_indices):
+                d = _diffusion_matrix[i, i]
+                if d:
+                    matrix[row, :] /= -d
+                    matrix[row, i] = 0
+                else:
+                    matrix[row, :] = 0
+            global _mat_for_zero_volume_nodes
+            _mat_for_zero_volume_nodes = matrix.tocsr()
 
 
 def _init():
     # TODO: check about the 0<x<1 problem alluded to in the documentation
     h.define_shape()
     
-    section1d._purge_cptrs()
     
-    for sr in species._get_all_species().values():
-        s = sr()
-        if s is not None:
-            s._register_cptrs()
-            s._finitialize()
-    _setup_matrices()
+    dim = region._sim_dimension
+    if dim == 3:
+        for sr in species._get_all_species().values():
+            s = sr()
+            if s is not None:
+                # s._register_cptrs()
+                s._finitialize()
+        _setup_matrices()
+    elif dim == 1:
+        section1d._purge_cptrs()
+        
+        for sr in species._get_all_species().values():
+            s = sr()
+            if s is not None:
+                s._register_cptrs()
+                s._finitialize()
+        _setup_matrices()
 
 #
 # register the initialization handler and the advance handler
