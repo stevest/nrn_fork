@@ -1,10 +1,11 @@
 #from neuron import h
 #h.load_file('stdrun.hoc')
+from rxdException import RxDException
 
 try:
     import scipy
 except:
-    raise Exception('NEURON RxD module requires SciPy')
+    raise RxDException('NEURON RxD module requires SciPy')
 
 import rxd
 from species import Species
@@ -14,6 +15,8 @@ from reaction import Reaction
 import geometry
 from multiCompartmentReaction import MultiCompartmentReaction
 from rxd import re_init
+import dimension3
+import gui
 
 from geometry import membrane, inside, Shell, FractionalVolume, FixedCrossSection, FixedPerimeter
 # deprecated:
