@@ -1,3 +1,5 @@
+from rxdException import RxDException
+
 class NodeList(list):
     def __init__(self, items):
         """Constructs a NodeList from items, a python iterable containing Node objects."""
@@ -5,6 +7,15 @@ class NodeList(list):
     def __call__(self, restriction):
         """returns a sub-NodeList consisting of nodes satisfying restriction"""
         return NodeList([i for i in self if i.satisfies(restriction)])
+    
+    @property
+    def value(self):
+        # TODO: change this when not everything is a concentration
+        return self.concentration
+    @value.setter
+    def value(self, v):
+        # TODO: change this when not everything is a concentration
+        self.concentration = v
     
     @property
     def concentration(self):
@@ -17,7 +28,7 @@ class NodeList(list):
             if len(value) == len(self):
                 for node, val in zip(self, value): node.concentration = val
             else:
-                raise Exception('concentration must either be a scalar or an iterable of the same length as the NodeList')
+                raise RxDException('concentration must either be a scalar or an iterable of the same length as the NodeList')
         for node in self: node.concentration = value
     
     @property
@@ -31,7 +42,7 @@ class NodeList(list):
             if len(value) == len(self):
                 for node, val in zip(self, value): node.diff = val
             else:
-                raise Exception('diff must either be a scalar or an iterable of the same length as the NodeList')
+                raise RxDException('diff must either be a scalar or an iterable of the same length as the NodeList')
         for node in self: node.diff = value
 
     @property
