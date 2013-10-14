@@ -32,6 +32,8 @@ void nrnpy_augment_path();
 void nrnpython_ensure_threadstate();
 int nrnpy_pyrun(const char*);
 extern int (*p_nrnpy_pyrun)(const char*);
+extern int nrn_global_argc;
+extern char** nrn_global_argv;
 }
 
 static PyThreadState* main_threadstate_;
