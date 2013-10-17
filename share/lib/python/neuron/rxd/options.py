@@ -1,7 +1,9 @@
+from rxdException import RxDException
+
 try:
     import scipy
 except:
-    raise Exception("NEURON's rxd module requires scipy")
+    raise RxDException("NEURON's rxd module requires scipy")
 
 import warnings
 
@@ -14,3 +16,7 @@ else:
     warnings.warn('scipy < 0.10.1 found; setting rxd.options.use_reaction_contribution_to_jacobian = False to avoid a memory leak in scipy.sparse.linalg.factorized')
     use_reaction_contribution_to_jacobian = False
 
+# the number of electrophysiology fixed steps per rxd step
+# WARNING: setting this to anything other than 1 is probably a very bad
+#          idea, numerically speaking, at least for nwo
+fixed_step_factor = 1
