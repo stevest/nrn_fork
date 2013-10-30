@@ -1,7 +1,9 @@
 import weakref
 from neuron import h
-from . import node, rxd, rxdsection, nodelist, morphology
+import rxd
+from . import node, rxdsection, nodelist, morphology
 import numpy
+from .rxdException import RxDException
 
 # all concentration ptrs and indices
 _all_cptrs = []
@@ -66,7 +68,7 @@ class Section1D(rxdsection.RxDSection):
         return range(self._offset, self._offset + self.nseg)
 
         
-    def _setup_currents(self, indices, scales, ptrs):
+    def _setup_currents(self, indices, scales, ptrs, cur_map):
         if self.nrn_region is not None and self.species.name is not None and self.species.charge != 0:
             ion_curr = '_ref_i%s' % self.species.name
             indices.extend(self.indices)
@@ -78,14 +80,16 @@ class Section1D(rxdsection.RxDSection):
             elif self.nrn_region == 'o':
                 sign = 1
             else:
-                raise Exception('bad nrn_region for setting up currents (should never get here)')
+                raise RxDException('bad nrn_region for setting up currents (should never get here)')
             scales.extend(sign * surface_area[self.indices] * 10000. / (self.species.charge * rxd.FARADAY * volumes[self.indices]))
+            for i in xrange(self.nseg):
+                cur_map[self.species.name + self.nrn_region][self._sec((i + 0.5) / self.nseg)] = len(ptrs) + i
             ptrs.extend([self._sec((i + 0.5) / self.nseg).__getattribute__(ion_curr) for i in xrange(self.nseg)])
 
     @property
     def nodes(self):
         dx = self.L / self.nseg
-        return nodelist.NodeList([node.Node(self, i, ((i + 0.5) * dx) / self.L) for i in xrange(self.nseg)])
+        return nodelist.NodeList([node.Node1D(self, i, ((i + 0.5) * dx) / self.L) for i in xrange(self.nseg)])
             
     def _transfer_to_legacy(self):
         states = node._get_states()
