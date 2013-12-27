@@ -1,9 +1,10 @@
 import math
 import numpy
-import rxdmath
 import species
+import rxdmath
 import weakref
 import functools
+from .rxdException import RxDException
 
 def _vectorized(f, objs):
     if hasattr(objs, '__len__'):
@@ -67,18 +68,18 @@ def _ensure_arithmeticed(other):
     if isinstance(other, species._SpeciesMathable):
         other = _Arithmeticed(other)
     elif isinstance(other, _Reaction):
-        raise Exception('Cannot do arithmetic on a reaction')
+        raise RxDException('Cannot do arithmetic on a reaction')
     elif not isinstance(other, _Arithmeticed):
         other = _Arithmeticed(other, valid_reaction_term=False)
     return other
 
 def _validate_reaction_terms(r1, r2):
     if not(r1._valid_reaction_term or r2._valid_reaction_term):
-        raise Exception('lhs=%r and rhs=%r not valid in a reaction' % (r1, r2))
+        raise RxDException('lhs=%r and rhs=%r not valid in a reaction' % (r1, r2))
     elif not r1._valid_reaction_term:
-        raise Exception('lhs=%r not valid in a reaction' % r1)
+        raise RxDException('lhs=%r not valid in a reaction' % r1)
     elif not r2._valid_reaction_term:
-        raise Exception('rhs=%r not valid in a reaction' % r2)
+        raise RxDException('rhs=%r not valid in a reaction' % r2)
 
 
 class _Function:
@@ -151,17 +152,17 @@ def floor(obj):
 def fmod(obj1, obj2):
     return _Arithmeticed(_Function2(obj1, obj2, 'numpy.fmod', 'fmod'), valid_reaction_term=False)
 def frexp(obj):
-    raise Exception('frexp not supported in this context')
+    raise RxDException('frexp not supported in this context')
 def fsum(obj):
-    raise Exception('fsum not supported in this context')
+    raise RxDException('fsum not supported in this context')
 def gamma(obj):
     return _Arithmeticed(_Function(obj, 'rxdmath._gamma', 'gamma'), valid_reaction_term=False)
 def hypot(obj1, obj2):
     return _Arithmeticed(_Function2(obj1, obj2, 'numpy.hypot', 'hypot'), valid_reaction_term=False)
 def isinf(obj):
-    raise Exception('isinf not supported in this context')
+    raise RxDException('isinf not supported in this context')
 def isnan(obj):
-    raise Exception('isnan not supported in this context')
+    raise RxDException('isnan not supported in this context')
 def ldexp(obj1, obj2):
     return _Arithmeticed(_Function2(obj1, obj2, 'numpy.ldexp', 'ldexp'), valid_reaction_term=False)
 def lgamma(obj):
@@ -173,7 +174,7 @@ def log10(obj):
 def log1p(obj):
     return _Arithmeticed(_Function(obj, 'numpy.log1p', 'log1p'), valid_reaction_term=False)
 def modf(obj):
-    raise Exception('modf not supported in this context')
+    raise RxDException('modf not supported in this context')
 # this seems to be okay; just have to avoid using pow in any other context
 def pow(obj1, obj2):
     return _Arithmeticed(_Function2(obj1, obj2, 'rxdmath._power', 'pow'), valid_reaction_term=False)
@@ -236,12 +237,25 @@ class _Arithmeticed:
         if isinstance(item, dict):
             self._items = dict(item)
         elif isinstance(item, _Reaction):
-            raise Exception('Cannot do arithmetic on a reaction')
+            raise RxDException('Cannot do arithmetic on a reaction')
         else:
             self._items = {item: 1}
         self._valid_reaction_term = valid_reaction_term
+        self._compiled_form = None
     
-    
+    def _evaluate(self, location):
+        if self._compiled_form is None:
+            self._compiled_form = _compile(self)
+        if len(location) != 3:
+            raise RxDException('_evaluate needs a (region, section, normalized position) triple')
+        region, sec, x = location
+        concentrations = [numpy.array(sp()[region].nodes(sec)(x).concentration) for sp in self._compiled_form[1]]
+        value = self._compiled_form[0](*concentrations)
+        if len(value) != 1:
+            # this could happen in 3D
+            raise RxDException('found %d values; expected 1.' % len(value))
+        return value[0]
+            
     def __repr__(self):
         items = []
         counts = []
@@ -271,13 +285,15 @@ class _Arithmeticed:
     def _semi_compile(self):
         items = []
         counts = []
+        items_append = items.append
+        counts_append = counts.append
         for item, count in zip(self._items.keys(), self._items.values()):
             if count:
                 try:
-                    items.append(item._semi_compile)
+                    items_append(item._semi_compile)
                 except AttributeError:
-                    items.append('%s' % item)
-                counts.append(count)
+                    items_append('%s' % item)
+                counts_append(count)
         result = ''
         for i, c in zip(items, counts):
             if result and c > 0:
