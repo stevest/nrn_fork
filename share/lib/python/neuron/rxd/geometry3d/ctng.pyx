@@ -2,23 +2,31 @@ from neuron import h
 import numpy
 import itertools
 import bisect
-from numpy import sqrt, fabs, linalg
+cimport numpy
+from numpy import linalg
+cimport cython
+from neuron.rxd.rxdException import RxDException
+
+cdef extern from "math.h":
+    double sqrt(double)
+    double fabs(double)
+
 from graphicsPrimitives import Sphere, Cone, Cylinder, SkewCone, Plane, Union, Intersection, SphereCone
 
-def seg_line_intersection(x1, y1, x2, y2, x3, y3, x4, y4, clip=True):
+cdef tuple seg_line_intersection(double x1, double y1, double x2, double y2, double x3, double y3, double x4, double y4, bint clip):
     # returns None if parallel (so None if 0 or infinitely many intersections)
     # if clip is True, requires intersection on segment; else returns line-line intersection
-    denom = float((y4 - y3) * (x2 - x1) - (x4 - x3) * (y2 - y1))
+    cdef double denom = (y4 - y3) * (x2 - x1) - (x4 - x3) * (y2 - y1)
     if denom == 0: return None
-    u = ((x4 - x3) * (y1 - y3) - (y4 - y3) * (x1 - x3)) / denom
+    cdef double u = ((x4 - x3) * (y1 - y3) - (y4 - y3) * (x1 - x3)) / denom
     if clip and not (0 <= u <= 1): return None
     return (x1 + u * (x2 - x1), y1 + u * (y2 - y1))
 
-def convert3dto2d(x, y, z, px, py, pz, xx, xy, xz, yx, yy, yz):
+cdef tuple convert3dto2d(double x, double y, double z, double px, double py, double pz, double xx, double xy, double xz, double yx, double yy, double yz):
     x -= px; y -= py; z -= pz
     return project(x, y, z, xx, xy, xz), project(x, y, z, yx, yy, yz)
 
-def closest_pt(pt, pts, z2):
+cdef tuple closest_pt(tuple pt, list pts, z2):
     dist = float('inf')
     closest = None
     for p in pts:
@@ -29,12 +37,14 @@ def closest_pt(pt, pts, z2):
             closest = p
     return closest
 
-def project(fromx, fromy, fromz, tox, toy, toz):
+cdef double project(double fromx, double fromy, double fromz, double tox, double toy, double toz):
     """scalar projection"""
     return (fromx * tox + fromy * toy + fromz * toz) / (tox ** 2 + toy ** 2 + toz ** 2) ** 0.5
     
-def extreme_pts(pts):
-    if len(pts) < 2: raise Exception('extreme points computation failed')
+cdef tuple extreme_pts(list pts):
+    if len(pts) < 2: raise RxDException('extreme points computation failed')
+    cdef double max_dist, d
+    cdef tuple pt1, pt2, best_p1, best_p2
     max_dist = -1
     
     for pt1, pt2 in itertools.combinations(pts, 2):
@@ -46,29 +56,37 @@ def extreme_pts(pts):
     return best_p1, best_p2 
 
 # helper function for maintaing the points-cones database
-def register(pts_cones_db, pt, cone):
+cdef register(dict pts_cones_db, tuple pt, cone):
     if pt not in pts_cones_db:
         pts_cones_db[pt] = []
     pts_cones_db[pt].append(cone)
 
 # helper function that counts the number of points inside a region
-def count_outside(region, pts, err=0):
-    return sum(1 if region.distance(*pt) > err else 0 for pt in pts)
+@cython.boundscheck(False)
+@cython.wraparound(False)
+cdef int count_outside(region, list pts, double err):
+    cdef numpy.ndarray[numpy.float_t, ndim=1] pt
+    cdef int result = 0
+    for pt in pts:
+        if region.distance(pt[0], pt[1], pt[2]) > err:
+            result += 1
+    return result
 
-
-def convert2dto3d(ptx, pty, x1, y1, z1, axis, radial_vec):
+@cython.boundscheck(False)
+@cython.wraparound(False)
+cdef list convert2dto3d(double ptx, double pty, double x1, double y1, double z1, numpy.ndarray[numpy.float_t, ndim=1] axis, numpy.ndarray[numpy.float_t, ndim=1] radial_vec):
     return [x1 + ptx * axis[0] + pty * radial_vec[0], y1 + ptx * axis[1] + pty * radial_vec[1], z1 + ptx * axis[2] + pty * radial_vec[2]]
 
-def qsolve(a, b, c):
+cdef double qsolve(double a, double b, double c):
     """solve a quadratic equation"""
-    discrim = b ** 2 - 4 * a * c
-    print 'discrim =', discrim
+    cdef double discrim = b ** 2 - 4 * a * c
     assert(discrim >= 0)
     return (-b - numpy.sqrt(discrim)) / (2 * a), (-b + numpy.sqrt(discrim)) / (2 * a)
 
-def tangent_sphere(cone, whichend):
+cdef tangent_sphere(cone, int whichend):
     pt0 = numpy.array([cone._x0, cone._y0, cone._z0])
     pt1 = numpy.array([cone._x1, cone._y1, cone._z1])
+    cdef double rnear, rfar, shift
     if whichend == 0:
         pt = pt0
         rnear = cone._r0
@@ -79,13 +97,18 @@ def tangent_sphere(cone, whichend):
         rnear, rfar = cone._r1, cone._r0
         shift_sign = -1
     else:
-        raise Exception('whichend for tangent_sphere must be 0 or 1')
+        raise RxDException('whichend for tangent_sphere must be 0 or 1')
     shift = (rnear * rfar - rnear ** 2) / cone.axislength
     axis = (pt1 - pt0) / cone.axislength
     result = Sphere(*(list(pt + shift_sign * shift * axis) + [numpy.sqrt(shift ** 2 + rnear ** 2)]))
     return result
 
-def join_outside(x0, y0, z0, r0, x1, y1, z1, r1, x2, y2, z2, r2, dx):
+@cython.boundscheck(False)
+@cython.wraparound(False)
+cdef list join_outside(double x0, double y0, double z0, double r0, double x1, double y1, double z1, double r1, double x2, double y2, double z2, double r2, double dx):
+    cdef double deltar, deltanr
+    cdef numpy.ndarray[numpy.float_t, ndim=1] pt1, radial_vec, nradial_vec, axis, naxis
+    
     axis = numpy.array([x2 - x1, y2 - y1, z2 - z1])
     naxis = numpy.array([x1 - x0, y1 - y0, z1 - z0])
     deltar = r2 - r1; deltanr = r1 - r0
@@ -114,8 +137,8 @@ def join_outside(x0, y0, z0, r0, x1, y1, z1, r1, x2, y2, z2, r2, dx):
 
     # count the corners that are inside a sphere clipped to the cones
     pt1 = numpy.array([x1, y1, z1])
-    left_corner_count = 2 - count_outside(sp, [pt1 + r1 * nradial_vec, pt1 - r1 * nradial_vec], err=dx * 0.5)
-    corner_count = 2 - count_outside(sp, [pt1 + r1 * radial_vec, pt1 - r1 * radial_vec], err=dx * 0.5)
+    cdef int left_corner_count = 2 - count_outside(sp, [pt1 + r1 * nradial_vec, pt1 - r1 * nradial_vec], dx * 0.5)
+    cdef int corner_count = 2 - count_outside(sp, [pt1 + r1 * radial_vec, pt1 - r1 * radial_vec], dx * 0.5)
     #print 'for join (%g, %g, %g; %g) - (%g, %g, %g; %g) - (%g, %g, %g; %g):' % (x0, y0, z0, r0, x1, y1, z1, r1, x2, y2, z2, r2)
     #print '   left_corner_count = %g; corner_count = %g' % (left_corner_count, corner_count)
     if left_corner_count == corner_count == 2:
@@ -138,14 +161,22 @@ def join_outside(x0, y0, z0, r0, x1, y1, z1, r1, x2, y2, z2, r2, dx):
             Plane(x1, y1, z1, axis[0], axis[1], axis[2]),
             Plane(x1, y1, z1, -naxis[0], -naxis[1], -naxis[2])])])
     else:
-        raise Exception('unexpected corner_counts?')
+        raise RxDException('unexpected corner_counts?')
     
     return result
 
+@cython.wraparound(False)
+@cython.boundscheck(False)
+def constructive_neuronal_geometry(source, int n_soma_step, double dx):    
+    cdef list objects = []
+    cdef int i, j, k
+    cdef double x0, y0, z0, x1, y1, z1, x2, y2, z2, x3, y3, x4, y4, r0, r1, r2
+    cdef double delta_x, delta_y, major_length, diam1, diam2
+    cdef list pts, f_pts, f_diams, branches, parent_sec_name
+    cdef dict pts_sources
+    cdef tuple pt
+    #cdef numpy.ndarray[numpy.float_t, ndim=1] x, y, z, xs_loop, ys_loop
 
-def constructive_neuronal_geometry(source, n_soma_step, dx):    
-    objects = []
-    
     source_is_import3d = False
     # TODO: come up with a better way of checking type
     if hasattr(source, 'sections'):
@@ -154,9 +185,8 @@ def constructive_neuronal_geometry(source, n_soma_step, dx):
         # probably an Import3D type
         num_contours = sum(sec.iscontour_ for sec in cell.sections)        
         if num_contours > 1:
-            raise Exception('more than one contour is not currently supported')
+            raise RxDException('more than one contour is not currently supported')
         if num_contours == 1:
-            # setup the soma
             # CTNG:soma
             branches = []
             parent_sec_name = []
@@ -204,7 +234,7 @@ def constructive_neuronal_geometry(source, n_soma_step, dx):
                     pts_sources = {}
                     for x3, y3 in zip(x, y):
                         x4, y4 = x3 + minor.x[0], y3 + minor.x[1]
-                        pt = seg_line_intersection(x1, y1, x2, y2, x3, y3, x4, y4, clip=False)
+                        pt = seg_line_intersection(x1, y1, x2, y2, x3, y3, x4, y4, False)
                         if pt is not None:
                             pts.append(pt)
                             if pt not in pts_sources:
@@ -220,7 +250,7 @@ def constructive_neuronal_geometry(source, n_soma_step, dx):
                     del pts_sources
                     
                     if len(extreme1) != 1 or len(extreme2) != 1:
-                        raise Exception('multiple most extreme points')
+                        raise RxDException('multiple most extreme points')
                     extreme1 = extreme1[0]
                     extreme2 = extreme2[0]
                     major_length = linalg.norm(major_p1 - major_p2)
@@ -228,7 +258,7 @@ def constructive_neuronal_geometry(source, n_soma_step, dx):
                     delta_x /= n_soma_step
                     delta_y /= n_soma_step
                     
-                    f_pts = [major_p1]
+                    f_pts = [extreme1]
                     f_diams = [0]
                     
                     # CTNG:slicesoma
@@ -238,7 +268,7 @@ def constructive_neuronal_geometry(source, n_soma_step, dx):
                         x1, y1 = x0 + minor.x[0], y0 + minor.x[1]
                         pts = []
                         for i in xrange(len(x)):
-                            pt = seg_line_intersection(xs_loop[i], ys_loop[i], xs_loop[i + 1], ys_loop[i + 1], x0, y0, x1, y1, clip=True)
+                            pt = seg_line_intersection(xs_loop[i], ys_loop[i], xs_loop[i + 1], ys_loop[i + 1], x0, y0, x1, y1, True)
                             if pt is not None: pts.append(pt)
                         p1, p2 = extreme_pts(pts)
                         p1, p2 = numpy.array(p1), numpy.array(p2)
@@ -246,7 +276,7 @@ def constructive_neuronal_geometry(source, n_soma_step, dx):
                         f_pts.append((cx, cy))
                         f_diams.append(linalg.norm(p1 - p2))
                     
-                    f_pts.append(major_p2)
+                    f_pts.append(extreme2)
                     f_diams.append(0)
                     
                     for i in xrange(len(f_pts) - 1):
@@ -257,7 +287,7 @@ def constructive_neuronal_geometry(source, n_soma_step, dx):
                         objects.append(SkewCone(pt1x, pt1y, z0, diam1 * 0.5, pt1x + delta_x, pt1y + delta_y, z0, diam2 * 0.5, pt2x, pt2y, z0))
                 else:
                     parent_sec_name.append(sec.parentsec.hname())
-                    branches.append(sec)
+                    branches.append(sec)        
     else:
         h.define_shape()
         soma_sec = None
@@ -267,27 +297,28 @@ def constructive_neuronal_geometry(source, n_soma_step, dx):
         # this is ignored in this case, but needs to be same length
         # so this way no extra memory except the pointer
         parent_sec_name = branches
-            
+
+
     #####################################################################
     #
     # add the branches
     #
     #####################################################################
-    diam_corrections = {None: None}
-
+    cdef dict diam_corrections = {None: None}
+    cdef dict clip_copying = {}
     while diam_corrections:
         all_cones = []
         pts_cones_db = {}
         diam_db = {}
         for branch, psec in zip(branches, parent_sec_name):
             if source_is_import3d:
-                x, y, z = [branch.raw.getrow(i).to_python() for i in xrange(3)]
+                x, y, z = [numpy.array(branch.raw.getrow(i).to_python()) for i in range(3)]
                 d = branch.d.to_python()    
             else:
-                x = [h.x3d(i, sec=branch) for i in xrange(int(h.n3d(sec=branch)))]
-                y = [h.y3d(i, sec=branch) for i in xrange(int(h.n3d(sec=branch)))]
-                z = [h.z3d(i, sec=branch) for i in xrange(int(h.n3d(sec=branch)))]
-                d = [h.diam3d(i, sec=branch) for i in xrange(int(h.n3d(sec=branch)))]
+                x = numpy.array([h.x3d(i, sec=branch) for i in xrange(int(h.n3d(sec=branch)))])
+                y = numpy.array([h.y3d(i, sec=branch) for i in xrange(int(h.n3d(sec=branch)))])
+                z = numpy.array([h.z3d(i, sec=branch) for i in xrange(int(h.n3d(sec=branch)))])
+                d = numpy.array([h.diam3d(i, sec=branch) for i in xrange(int(h.n3d(sec=branch)))])
 
             # make sure that all the ones that connect to the soma do in fact connect
             # do this by connecting to local center axis
@@ -298,9 +329,17 @@ def constructive_neuronal_geometry(source, n_soma_step, dx):
                 cp = closest_pt(pt, f_pts, somaz)
                 # NEURON includes the wire point at the center; we want to connect
                 # to the closest place on the soma's axis instead with full diameter
-                x, y, z, d = [cp[0]] + [X for X in x[1 :]], [cp[1]] + [Y for Y in y[1:]], [somaz] + [Z for Z in z[1:]], [d[1]] + [D for D in d[1 :]]
+                # x, y, z, d = [cp[0]] + [X for X in x[1 :]], [cp[1]] + [Y for Y in y[1:]], [somaz] + [Z for Z in z[1:]], [d[1]] + [D for D in d[1 :]]
+                x[0], y[0] = cp
+                z[0] = somaz
+                d[0] = d[1]
+                # cap this with a sphere for smooth joins
+                sphere_cap = Sphere(x[0], y[0], z[0], d[0] * 0.5)
+                # make sure sphere doesn't stick out of wrong side of cylinder
+                sphere_cap.set_clip([Plane(x[1], y[1], z[1], x[1] - x[0], y[1] - y[0], z[1] - z[0])])
+                objects.append(sphere_cap)
 
-            for i in xrange(len(x) - 1):
+            for i in range(len(x) - 1):
                 d0, d1 = d[i : i + 2]
                 if (x[i] != x[i + 1] or y[i] != y[i + 1] or z[i] != z[i + 1]):
                     # short section check
@@ -320,9 +359,9 @@ def constructive_neuronal_geometry(source, n_soma_step, dx):
                         all_cones.append(Cone(x0, y0, z0, d0 * 0.5, x1, y1, z1, d1 * 0.5))
                     else:
                         all_cones.append(Cylinder(x0, y0, z0, x1, y1, z1, d1 * 0.5))
-                    
-                    register(pts_cones_db, (x0, y0, z0), all_cones[-1])
-                    register(pts_cones_db, (x1, y1, z1), all_cones[-1])
+                    with cython.wraparound(True):
+                        register(pts_cones_db, (x0, y0, z0), all_cones[-1])
+                        register(pts_cones_db, (x1, y1, z1), all_cones[-1])
                     register(diam_db, (x0, y0, z0), d0)
                     register(diam_db, (x1, y1, z1), d1)
         
@@ -337,9 +376,10 @@ def constructive_neuronal_geometry(source, n_soma_step, dx):
        
 
 
-    cone_clip_db = {cone: [] for cone in all_cones}
-
-    join_counts = {'2m': 0, '2s': 0, '3m': 0, '3s': 0, '4m': 0, '4s': 0, '0m': 0, '0s': 0, '1m': 0, '1s': 0}
+    cdef dict cone_clip_db = {cone: [] for cone in all_cones}
+    cdef bint sharp_turn
+#    cdef dict join_counts = {'2m': 0, '2s': 0, '3m': 0, '3s': 0, '4m': 0, '4s': 0, '0m': 0, '0s': 0, '1m': 0, '1s': 0}
+    join_items_needing_clipped = []
     for cone in all_cones:
         x1, y1, z1, r1 = cone._x0, cone._y0, cone._z0, cone._r0
         x2, y2, z2, r2 = cone._x1, cone._y1, cone._z1, cone._r1
@@ -354,6 +394,8 @@ def constructive_neuronal_geometry(source, n_soma_step, dx):
         if not right_neighbors: right_neighbors = [None]
         for neighbor_left, neighbor_right in itertools.product(left_neighbors, right_neighbors):
             clips = []
+            # if any join needs to be subject to clips, it goes here
+            join_item = None
             # process the join on the "left" (end 1)
             if neighbor_left is not None:
                 # any joins are created on the left pass; the right pass will only do clippings
@@ -363,7 +405,14 @@ def constructive_neuronal_geometry(source, n_soma_step, dx):
                 pt0 = numpy.array([x0, y0, z0])
                 naxis = (pt1 - pt0) / linalg.norm(pt1 - pt0)
                 # no need to clip if the cones are perfectly aligned
-                if any(axis != naxis):
+                if all(axis == naxis):
+                    if r0 == r1 == r2:
+                        # two parallel cylinders with equal radii: join by combining
+                        # TODO: we can remove the original two if we can find them
+                        join_item = Cylinder(x0, y0, z0, x2, y2, z2, r2)
+                        join_items_needing_clipped.append((join_item, neighbor_left, neighbor_right))
+                        objects.append(join_item)
+                else:
                     if r0 == r1 == r2:
                         # simplest join: two cylinders (no need for all that nastiness below)
                         sp = Sphere(x1, y1, z1, r1)
@@ -383,8 +432,8 @@ def constructive_neuronal_geometry(source, n_soma_step, dx):
 
                         # count the corners that are inside the other cone (for both ways)
                         # CTNG:outsidecorners
-                        my_corner_count = count_outside(neighbor_left, [pt1 + r1 * radial_vec, pt1 - r1 * radial_vec])
-                        corner_count = my_corner_count + count_outside(cone, [pt1 + r1 * nradial_vec, pt1 - r1 * nradial_vec])
+                        my_corner_count = count_outside(neighbor_left, [pt1 + r1 * radial_vec, pt1 - r1 * radial_vec], 0)
+                        corner_count = my_corner_count + count_outside(cone, [pt1 + r1 * nradial_vec, pt1 - r1 * nradial_vec], 0)
 
                         # if corner_count == 0, then probably all nan's from size 0 meeting size 0; ignore
                         # if is 1, probably parallel; no joins
@@ -406,12 +455,13 @@ def constructive_neuronal_geometry(source, n_soma_step, dx):
                             else:
                                 # CTNG:3outacute
                                 objects += join_outside(x0, y0, z0, r0, x1, y1, z1, r1, x2, y2, z2, r2, dx)
-                                if my_corner_count == 1:
-                                    objects.append(tangent_sphere(neighbor_left, 1))
-                                    objects[-1].set_clip([Plane(x2, y2, z2, naxis[0], naxis[1], naxis[2])])
-                                else:
-                                    objects.append(tangent_sphere(cone, 0))
-                                    objects[-1].set_clip([Plane(x0, y0, z0, -axis[0], -axis[1], -axis[2])])
+                                with cython.wraparound(True):
+                                    if my_corner_count == 1:
+                                        objects.append(tangent_sphere(neighbor_left, 1))
+                                        objects[-1].set_clip([Plane(x2, y2, z2, naxis[0], naxis[1], naxis[2])])
+                                    else:
+                                        objects.append(tangent_sphere(cone, 0))
+                                        objects[-1].set_clip([Plane(x0, y0, z0, -axis[0], -axis[1], -axis[2])])
                         
 
                                 
@@ -437,8 +487,8 @@ def constructive_neuronal_geometry(source, n_soma_step, dx):
                                     Plane(x1, y1, z1, -naxis[0], -naxis[1], -naxis[2]),
                                     neighbor_copy]))
 
-                        join_type = '%d%s' % (corner_count, 's' if sharp_turn else 'm')
-                        join_counts[join_type] += 1
+#                        join_type = '%d%s' % (corner_count, 's' if sharp_turn else 'm')
+#                        join_counts[join_type] += 1
             
 
 
@@ -470,8 +520,8 @@ def constructive_neuronal_geometry(source, n_soma_step, dx):
                         radial_vec /= radial_vec_norm
                         nradial_vec /= linalg.norm(nradial_vec)
                         # count the corners that are inside the other cone (for both ways)
-                        my_corner_count = count_outside(neighbor_right, [pt2 + r2 * radial_vec, pt2 - r2 * radial_vec])
-                        corner_count = my_corner_count + count_outside(cone, [pt2 + r2 * nradial_vec, pt2 - r2 * nradial_vec])
+                        my_corner_count = count_outside(neighbor_right, [pt2 + r2 * radial_vec, pt2 - r2 * radial_vec], 0)
+                        corner_count = my_corner_count + count_outside(cone, [pt2 + r2 * nradial_vec, pt2 - r2 * nradial_vec], 0)
                         if corner_count == 2:
                             # no clipping; already joined
                             pass
@@ -497,20 +547,19 @@ def constructive_neuronal_geometry(source, n_soma_step, dx):
             
             
             if clips:
-                cone_clip_db[cone].append(Intersection(clips))
-
-
-
-
-
-    #print 'join_counts:'
-    #print join_counts
-
+                int_clip = Intersection(clips)
+                cone_clip_db[cone].append(int_clip)
 
     for cone in all_cones:
         clip = cone_clip_db[cone]
         if clip:
             cone.set_clip([Union(clip)])
+    
+    # clip long joins against the extreme edges
+    for join_item, left, right in join_items_needing_clipped:
+        if left: clip = left.get_clip()
+        if right: clip += right.get_clip()
+        join_item.set_clip(clip)
         
     #####################################################################
     #
@@ -519,4 +568,5 @@ def constructive_neuronal_geometry(source, n_soma_step, dx):
     #####################################################################
 
     objects += all_cones
+    
     return objects
