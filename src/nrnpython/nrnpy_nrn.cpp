@@ -1117,6 +1117,9 @@ static PyMethodDef NPySecObj_methods[] = {
 	{"name", (PyCFunction)NPySecObj_name, METH_NOARGS,
 	 "Section name (same as hoc secname())"
 	},
+	{"hname", (PyCFunction)NPySecObj_name, METH_NOARGS,
+	 "Section name (same as hoc secname())"
+	},
 	{"connect", (PyCFunction)NPySecObj_connect, METH_VARARGS,
 	 "childSection.connect(parentSection, [parentX], [childEnd]) or\nchildSection.connect(parentSegment, [childEnd])"
 	},
@@ -1267,6 +1270,10 @@ myPyMODINIT_FUNC nrnpy_nrn(void)
 #if PY_MAJOR_VERSION >= 3
     m = PyModule_Create(&nrnmodule);
 #else
+    m = Py_InitModule3("_neuron_section", nrnpy_methods,
+                       "NEURON interaction with Python");
+    PyModule_AddObject(m, "Section", (PyObject *)psection_type);
+    PyModule_AddObject(m, "Segment", (PyObject *)psegment_type);
     m = Py_InitModule3("nrn", nrnpy_methods,
                        "NEURON interaction with Python");
 #endif
