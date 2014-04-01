@@ -1,9 +1,16 @@
-from . import node, rxdmath
-import rxd
+from . import rxd, node, rxdmath
 import numpy
 import weakref
 import itertools
 import scipy.sparse
+import itertools
+
+_weakref_ref = weakref.ref
+
+# aliases to avoid repeatedly doing multiple hash-table lookups
+_itertools_chain = itertools.chain
+_numpy_array = numpy.array
+_scipy_sparse_coo_matrix = scipy.sparse.coo_matrix
 
 # converting from mM um^3 to molecules
 # = 6.02214129e23 * 1000. / 1.e18 / 1000
@@ -15,7 +22,7 @@ molecules_per_mM_um3 = 602214.129
 def ref_list_with_mult(obj):
     result = []
     for i, p in zip(obj.keys(), obj.values()):
-        w = weakref.ref(i)
+        w = _weakref_ref(i)
         result += [w] * p
     return result
 
@@ -54,11 +61,11 @@ def get_scheme_rate1_rate2_regions_custom_dynamics_mass_action(args, kwargs):
         # because of the missing <>
         scheme = args[0]
         if not isinstance(scheme, rxdmath._Reaction):
-            raise Exception('%r not a recognized reaction scheme' % self._scheme)
+            raise RxDException('%r not a recognized reaction scheme' % self._scheme)
         rate1 = args[1]
         rate2 = None
     else:
-        raise Exception('Invalid number of arguments to rxd.Reaction')
+        raise RxDException('Invalid number of arguments to rxd.Reaction')
         
     # keyword arguments
     # custom_dynamics is discouraged in favor of its antonym mass_action
@@ -75,30 +82,32 @@ class GeneralizedReaction(object):
     def __del__(self):
         rxd._unregister_reaction(self)
 
-    def _setup_membrane_fluxes(self, sec_list, x_list):
+    def _setup_membrane_fluxes(self, node_indices, cur_map):
+        # TODO: make sure this is redone whenever nseg changes
         if not self._membrane_flux: return
 
         # locate the regions containing all species (including the one that changes)
         if all(sptr() for sptr in self._sources) and all(dptr() for dptr in self._dests):
-            active_regions = [r for r in self._regions if all(sptr()._indices(r) for sptr in self._sources + self._dests)]
+            active_regions = [r for r in self._regions if all(sptr().indices(r) for sptr in self._sources + self._dests)]
         else:
             active_regions = []
-            
+        node_indices_append = node_indices.append
         for r in active_regions:
             for sec in r._secs:
-                for i in xrange(sec.nseg):
-                    sec_list.append(sec=sec)
-                    x_list.append((i + 0.5) / sec.nseg)
+                for seg in sec:
+                    node_indices_append(seg.node_index())
 
-        self._do_memb_scales()
+        self._do_memb_scales(cur_map)
         
     def _get_args(self, states):
         args = []
+        args_append = args.append
+        self_indices_dict = self._indices_dict
         for sptr in self._involved_species:
             s = sptr()
             if not s:
                 return None
-            args.append(states[self._indices_dict[s]])
+            args_append(states[self_indices_dict[s]])
         return args
         
     def _update_indices(self):
@@ -123,23 +132,22 @@ class GeneralizedReaction(object):
         # store the indices
         for sptr in self._involved_species:
             s = sptr()
-            self._indices_dict[s] = sum([s.indices(r) for r in active_regions], [])
-        sources_indices = [sum([sptr().indices(r) for r in active_regions], []) for sptr in self._sources]
-        dests_indices = [sum([dptr().indices(r) for r in active_regions], []) for dptr in self._dests]
+            self._indices_dict[s] = list(_itertools_chain.from_iterable(s.indices(r) for r in active_regions))
+        sources_indices = [list(_itertools_chain.from_iterable(sptr().indices(r) for r in active_regions)) for sptr in self._sources]
+        dests_indices = [list(_itertools_chain.from_iterable(dptr().indices(r) for r in active_regions)) for dptr in self._dests]
         self._indices = sources_indices + dests_indices
         volumes, surface_area, diffs = node._get_data()
         #self._mult = [list(-1. / volumes[sources_indices]) + list(1. / volumes[dests_indices])]
         if self._trans_membrane and active_regions:
             # note that this assumes (as is currently enforced) that if trans-membrane then only one region
             # TODO: verify the areas and volumes are in the same order!
-            areas = numpy.array(sum([list(self._regions[0]._geometry.volumes1d(sec)) for sec in self._regions[0].secs], []))
+            areas = _numpy_array(list(_itertools_chain.from_iterable([list(self._regions[0]._geometry.volumes1d(sec)) for sec in self._regions[0].secs])))
             if not self._scale_by_area:
                 areas = numpy.ones(len(areas))
             self._mult = [-areas / volumes[si] / molecules_per_mM_um3 for si in sources_indices] + [areas / volumes[di] / molecules_per_mM_um3 for di in dests_indices]
-            self._areas = areas
         else:
             self._mult = list(-1 for v in sources_indices) + list(1 for v in dests_indices)
-        self._mult = numpy.array(self._mult)
+        self._mult = _numpy_array(self._mult)
         self._update_jac_cache()
 
 
@@ -164,11 +172,12 @@ class GeneralizedReaction(object):
 
     def _update_jac_cache(self):
         num_involved = len(self._involved_species)
-        self._jac_rows = list(itertools.chain(*[ind * num_involved for ind in self._indices]))
+        self._jac_rows = list(_itertools_chain(*[ind * num_involved for ind in self._indices]))
         num_ind = len(self._indices)
-        self._jac_cols = list(itertools.chain(*[self._indices_dict[s()] for s in self._involved_species])) * num_ind
+        self._jac_cols = list(_itertools_chain(*[self._indices_dict[s()] for s in self._involved_species])) * num_ind
         if self._trans_membrane:
             self._mult_extended = [sum([list(mul) * num_involved], []) for mul in self._mult]
+            #self._mult_extended = [list(_itertools_chain.from_iterable(list(mul) * num_involved)) for mul in self._mult]
         else:
             self._mult_extended = self._mult
         
@@ -179,21 +188,22 @@ class GeneralizedReaction(object):
         indices, mult, base_value = self._evaluate_args(args)
         mult = self._mult_extended
         derivs = []
+        derivs_append = derivs.append
         for i, arg in enumerate(args):
             args[i] = arg + dx
             new_value = self._evaluate_args(args)[2]
             args[i] = arg
-            derivs.append((new_value - base_value) / dx)
-        derivs = numpy.array(list(itertools.chain(*derivs)))
+            derivs_append((new_value - base_value) / dx)
+        derivs = _numpy_array(list(_itertools_chain(*derivs)))
         if self._trans_membrane:
-            data = list(itertools.chain(*[derivs * mul * multiply for mul in mult]))
+            data = list(_itertools_chain(*[derivs * mul * multiply for mul in mult]))
             #data = derivs * mult * multiply
         else:
-            data = list(itertools.chain(*[derivs * mul * multiply for mul in mult]))
+            data = list(_itertools_chain(*[derivs * mul * multiply for mul in mult]))
         return self._jac_rows, self._jac_cols, data
     
     def _jacobian(self, states, multiply=1, dx=1.e-10):
         rows, cols, data = self._jacobian_entries(states, multiply=multiply, dx=dx)
         n = len(states)
-        jac = scipy.sparse.coo_matrix((data, (rows, cols)), shape=(n, n))
+        jac = _scipy_sparse_coo_matrix((data, (rows, cols)), shape=(n, n))
         return jac
