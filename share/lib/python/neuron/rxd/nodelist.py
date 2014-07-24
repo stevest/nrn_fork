@@ -44,6 +44,49 @@ class NodeList(list):
             else:
                 raise RxDException('diff must either be a scalar or an iterable of the same length as the NodeList')
         for node in self: node.diff = value
+        
+    def value_to_grid(self):
+        """Returns a regular grid with the values of the 3d nodes in the list.
+        
+        The grid is a copy only.
+        
+        Grid points not belonging to the object are assigned a value of NaN.
+        
+        Nodes that are not 3d will be ignored. If there are no 3d nodes, returns
+        a 0x0x0 numpy array.
+        
+        Warning: Currently only supports nodelists over 1 region.
+        """
+        import numpy
+        from .node import Node3D
+        
+        # identify regions involved
+        regions = set()
+        for node in self:
+            if isinstance(node, Node3D):
+                regions.add(node.region)
+        
+        # default result that falls through if no regions
+        result = numpy.zeros((0, 0, 0))
+
+        if len(regions) > 1:
+            # TODO: the reason for this restriction is the need to make sure
+            #       the mesh lines up
+            raise RxDException('value_to_grid currently only supports 1 region')
+        
+        for r in regions:
+            # TODO: if allowing multiple regions, need to change this
+            result = numpy.empty(r._mesh.shape)
+            result.fill(numpy.nan)
+            
+            for node in self:
+                if isinstance(node, Node3D):
+                    # TODO: if allowing multiple regions, adjust i, j, k as needed
+                    result[node._i, node._j, node._k] = node.value
+        
+        return result
+            
+        
 
     @property
     def volume(self):
