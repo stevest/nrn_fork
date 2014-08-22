@@ -33,6 +33,8 @@ extern char** nrn_global_argv;
 void nrnpy_augment_path();
 int nrnpy_pyrun(const char*);
 extern int (*p_nrnpy_pyrun)(const char*);
+extern int nrn_global_argc;
+extern char** nrn_global_argv;
 #if NRNPYTHON_DYNAMICLOAD
 int nrnpy_site_problem;
 #endif

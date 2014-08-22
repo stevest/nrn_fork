@@ -1,15 +1,22 @@
 from neuron import h
 import itertools
 
+# aliases to avoid repeatedly doing multiple hash-table lookups
+_h_section_ref = h.SectionRef
+_h_allsec = h.allsec
+_h_parent_connection = h.parent_connection
+_h_section_orientation = h.section_orientation
+_itertools_combinations = itertools.combinations
+
 def parent(sec):
     """Return the parent of sec or None if sec is a root"""
-    sref = h.SectionRef(sec=sec)
+    sref = _h_section_ref(sec=sec)
     if sref.has_trueparent():
         return sref.trueparent().sec
     elif sref.has_parent():
         temp = sref.parent().sec
         # check if temp owns the connection point
-        if h.SectionRef(sec=temp).has_parent() and h.parent_connection(sec=temp) == h.section_orientation(sec=temp):
+        if _h_section_ref(sec=temp).has_parent() and _h_parent_connection(sec=temp) == _h_section_orientation(sec=temp):
             # connection point belongs to temp's ancestor
             return parent(temp)
         return temp
@@ -20,15 +27,15 @@ def parent(sec):
 def parent_loc(sec, trueparent):
     """Return the position on the (true) parent where sec is connected
     
-    Note that h.section_orientation(sec=sec) is which end of the section is
+    Note that _h_section_orientation(sec=sec) is which end of the section is
     connected.
     """
     # TODO: would I ever have a parent but not a trueparent (or vice versa)
-    sref = h.SectionRef(sec=sec)
+    sref = _h_section_ref(sec=sec)
     parent = sref.parent().sec
     while parent != trueparent:
-        sec, parent = parent, h.SectionRef(sec=sec).parent().sec
-    return h.parent_connection(sec=sec)
+        sec, parent = parent, _h_section_ref(sec=sec).parent().sec
+    return _h_parent_connection(sec=sec)
 
 class MorphologyDB:
     """
@@ -38,20 +45,27 @@ class MorphologyDB:
     """
     def __init__(self):
         """Create a MorphologyDB with the current NEURON morphology"""
-        self._children = {sec:[] for sec in h.allsec()}
+        self._children = {sec:[] for sec in _h_allsec()}
         self._parents = {}
         self._connection_pts = {}
-        for sec in h.allsec():
+        self._roots = []
+        for sec in _h_allsec():
             parent_sec = parent(sec)
             if parent_sec is not None:
                 self._children[parent_sec].append(sec)
-                pt = (parent_sec, parent_loc(sec, parent))
-                local_pt = (sec, h.section_orientation(sec=sec))
+                pt = (parent_sec, parent_loc(sec, parent_sec))
+                local_pt = (sec, _h_section_orientation(sec=sec))
                 if pt in self._connection_pts:
                     self._connection_pts[pt].append(local_pt)
                 else:
                     self._connection_pts[pt] = [pt, local_pt]
+            else:
+                self._roots.append(sec)
             self._parents[sec] = parent_sec
+    
+    @property
+    def roots(self):
+        return self._roots
     
     def parent(self, sec):
         """Return the (true)parent section of sec"""
@@ -69,7 +83,7 @@ class MorphologyDB:
         """Return a list of pairwise connections within secs"""
         result = []
         for pts in self._connection_pts.values():
-            for pt1, pt2 in itertools.combinations(pts, 2):
+            for pt1, pt2 in _itertools_combinations(pts, 2):
                 if pt1[0] in secs and pt2[0] in secs:
                     result.append([pt1, pt2])
         return result
@@ -111,6 +125,10 @@ def main():
     conns = morph.connections([s[i] for i in [2, 3, 4, 5, 6, 7, 9, 10, 11, 12]])
     for p1, p2 in conns:
         print '%s(%g)    %s(%g)' % (p1[0].name(), p1[1], p2[0].name(), p2[1])
+    
+    print
+    print
+    print 'roots:', morph.roots
     return 0
     
 if __name__ == '__main__':
