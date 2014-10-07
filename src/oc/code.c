@@ -99,7 +99,7 @@ static Datum	*stack;	/* the stack */
 static Datum	*stackp;	/* next free spot on stack */
 static Datum	*stacklast; /* last stack element */
 
-#define	NPROG	5000
+#define	NPROG	50000
 Inst	*prog;	/* the machine */
 Inst	*progp;		/* next free spot for code generation */
 Inst	*pc;		/* program counter during execution */
@@ -541,10 +541,10 @@ int hoc_xopen_run(Symbol* sp, const char* str) { /*recursively parse and execute
 	return n;
 }
 
-static char* stmp[20];
+static char* stmp[128];
 static int istmp = 0;
 char** hoc_temp_charptr(void) {
-	istmp = (istmp+1)%20;
+	istmp = (istmp+1)%128;
 	return stmp+istmp;
 }
 
