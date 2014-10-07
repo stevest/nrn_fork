@@ -839,13 +839,18 @@ static PyObject* hocobj_getattr(PyObject* subself, PyObject* name) {
 	    }
 	}
 	nrnpy_pystring_asstring_free(n);
+//printf("%s type=%d nindex=%d %s\n", self->sym_?self->sym_->name:"noname", self->type_, self->nindex_, sym->name);
+	// no hoc component for a hoc function
+	// ie the sym has to be a component for the object returned by the function
+	if (self->type_ == 2) {
+		PyErr_SetString(PyExc_TypeError, "No hoc method for a callable. Missing parentheses before the '.'?");
+		return NULL;
+	}
+	if (self->type_ == 3) {
+		PyErr_SetString(PyExc_TypeError, "Missing array index");
+		return NULL;
+	}
 	if (self->ho_) { // use the component fork.
-		// but no hoc component for a hoc function
-		// ie the sym is a component for the object
-		if (self->type_ == 2) {
-			PyErr_SetString(PyExc_TypeError, "No hoc method for a callable. Missing parentheses before the '.'?");
-			return NULL;
-		}
 		result = hocobj_new(hocobject_type, 0, 0);
 		PyHocObject* po = (PyHocObject*)result;
 		po->ho_ = self->ho_;
@@ -1182,14 +1187,21 @@ static Py_ssize_t hocobj_len(PyObject* self) {
 			return vector_capacity((Vect*)po->ho_->u.this_pointer);
 		}else if (po->ho_->ctemplate == hoc_list_template_) {
 			return ivoc_list_count(po->ho_);
-		}	
+		}else if (po->ho_->ctemplate == hoc_sectionlist_template_) {
+			PyErr_SetString(PyExc_TypeError, "hoc.SectionList has no len()");
+			return -1;
+		}
 	}else if (po->type_ == 3) {
 		Arrayinfo* a = hocobj_aray(po->sym_, po->ho_);
 		return araylen(a, po);
 	}else if (po->sym_ && po->sym_->type == TEMPLATE) {
 		return po->sym_->u.ctemplate->count;
+	}else if (po->type_ == 7) {
+		PyErr_SetString(PyExc_TypeError, "hoc.allsec() has no len()");
+		return -1;
 	}
-	return 0;
+	PyErr_SetString(PyExc_TypeError, "Most HocObject have no len()");
+	return -1;
 }
 
 static int hocobj_nonzero(PyObject* self) {
