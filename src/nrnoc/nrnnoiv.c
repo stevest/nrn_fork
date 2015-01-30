@@ -43,6 +43,7 @@ void nrn_play_init(){}
 void fixed_record_continuous(){}
 void fixed_play_continuous(){}
 void nrniv_recalc_ptrs(){}
+void nrn_recalc_ptrvector(){}
 void nrn_extra_scatter_gather(int direction, int tid) {}
 void nrn_update_ion_pointer(int type, Datum* d, int i, int j) {}
 void nrn_update_ps2nt(){}
@@ -65,7 +66,7 @@ void nrn_use_daspk(i) int i; { }
 
 #if CVODE
 void cvode_fadvance(t)double t;{}
-void cvode_finitialize(){}
+void cvode_finitialize(double t0){}
 void nrncvode_set_t(double tt) {}
 void cvode_event(x) double x;{}
 void clear_event_queue(){}
@@ -82,7 +83,7 @@ void* dll_load(v, s) void* v; char* s; {return 0;}
 #endif
 
 void nrn_spike_exchange_init(){}
-void nrn_spike_exchange(){}
+void nrn_spike_exchange(NrnThread* nt){}
 void nrn_fake_fire(i,x,j)int i, j; double x;{}
 void nrn_daq_ao() {}
 void nrn_daq_ai() {}

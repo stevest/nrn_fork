@@ -147,7 +147,7 @@ const char* expand_env_var(const char* s) {
 	int n;
 	int begin = 1; /* only needed for mac when necessary to prepend a : */
 	if (!hs) { hs = hocstr_create(256); }
-	hocstr_resize(hs, strlen(s));
+	hocstr_resize(hs, strlen(s) + 2);
 	for (cp1=s, cp2 = hs->buf + begin; *cp1; ++cp1) {
 		if (*cp1 == '$' && cp1[1] == '(') {
 			char* cp3;
@@ -165,7 +165,7 @@ const char* expand_env_var(const char* s) {
 				}
 				if (cp3) {
 					n = cp2 - hs->buf;
-					hocstr_resize(hs, n + strlen(cp3) + strlen(s));
+					hocstr_resize(hs, n + strlen(cp3) + strlen(s) + 2);
 					cp2 = hs->buf + n;
 					while(*cp3) {
 						*cp2++ = *cp3++;
@@ -500,8 +500,10 @@ void hoc_sprint1(char** ppbuf, int argn) {	/* convert args to right type for con
 			break;
 
 		case '%':
-			lflag = 0;
-			convflag = 0;
+			pfrag[-1] = 0;
+			strcpy(pbuf, frag);
+			didit = 1;
+			argn--; /* an arg was not consumed */
 			break;
 
 		default:

@@ -663,8 +663,10 @@ static Object** pp_get_segment(void* vptr) {
 		}
 		pseg->x_ = nrn_arc_position(sec, pnt->node);
 	}
-	Py_INCREF(pyseg);
-	return hoc_temp_objptr(nrnpy_pyobject_in_obj(pyseg));
+	Object* ho = nrnpy_pyobject_in_obj(pyseg);
+	Py_DECREF(pyseg);
+	--ho->refcount;
+	return hoc_temp_objptr(ho);
 }
 
 static void rv_noexist(Section* sec, const char* n, double x, int err) {
@@ -1187,6 +1189,9 @@ static PyMethodDef NPySecObj_methods[] = {
 	{"name", (PyCFunction)NPySecObj_name, METH_NOARGS,
 	 "Section name (same as hoc secname())"
 	},
+	{"hname", (PyCFunction)NPySecObj_name, METH_NOARGS,
+	 "Section name (same as hoc secname())"
+	},
 	{"connect", (PyCFunction)NPySecObj_connect, METH_VARARGS,
 	 "childSection.connect(parentSection, [parentX], [childEnd]) or\nchildSection.connect(parentSegment, [childEnd])"
 	},
@@ -1341,7 +1346,18 @@ myPyMODINIT_FUNC nrnpy_nrn(void)
     Py_INCREF(&nrnpy_RangeType);
 
 #if PY_MAJOR_VERSION >= 3
-    m = PyModule_Create(&nrnmodule);
+    m = PyModule_Create(&nrnsectionmodule); // like nrn but namespace will not include mechanims.
+#else
+    m = Py_InitModule3("_neuron_section", nrnpy_methods,
+                       "NEURON interaction with Python");
+#endif
+    PyModule_AddObject(m, "Section", (PyObject *)psection_type);
+    PyModule_AddObject(m, "Segment", (PyObject *)psegment_type);
+
+#if PY_MAJOR_VERSION >= 3
+    assert(PyDict_SetItemString(modules, "_neuron_section", m) == 0);
+    Py_DECREF(m);
+    m = PyModule_Create(&nrnmodule); // 
 #else
     m = Py_InitModule3("nrn", nrnpy_methods,
                        "NEURON interaction with Python");
@@ -1365,8 +1381,8 @@ myPyMODINIT_FUNC nrnpy_nrn(void)
     nrnpy_pysec_cell_equals_p_ = pysec_cell_equals;
 #endif
 #if PY_MAJOR_VERSION >= 3
-	assert(PyDict_SetItemString(modules, "nrn", m) == 0);
-	Py_DECREF(m);
+    assert(PyDict_SetItemString(modules, "nrn", m) == 0);
+    Py_DECREF(m);
     return m;
     fail:
         return NULL;

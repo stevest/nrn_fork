@@ -6,6 +6,9 @@ the prototypes be of the form "type foo(type arg, ...)"
 #ifndef nrnmpidec_h
 #define nrnmpidec_h
 #include <nrnmpiuse.h>
+#if defined(HAVE_STDINT_H)
+#include <stdint.h>
+#endif
 typedef long double longdbl;
 #if NRNMPI
 #include <stdlib.h>
@@ -69,7 +72,10 @@ extern void nrnmpi_int_gather(int* s, int* r, int cnt, int root);
 extern void nrnmpi_int_gatherv(int* s, int scnt, int* r, int* rcnt, int* rdispl, int root);
 extern void nrnmpi_int_allgather(int* s, int* r, int n);
 extern void nrnmpi_int_allgatherv(int* s, int* r, int* n, int* dspl);
+extern void nrnmpi_int_alltoall(int* s, int* r, int n);
 extern void nrnmpi_int_alltoallv(int* s, int* scnt, int* sdispl, int* r, int* rcnt, int* rdispl);
+extern void nrnmpi_long_allgatherv(int64_t* s, int64_t* r, int* n, int* dspl);
+extern void nrnmpi_long_alltoallv(int64_t* s, int* scnt, int* sdispl, int64_t* r, int* rcnt, int* rdispl);
 extern void nrnmpi_dbl_allgatherv(double* s, double* r, int* n, int* dspl);
 extern void nrnmpi_dbl_alltoallv(double* s, int* scnt, int* sdispl, double* r, int* rcnt, int* rdispl);
 extern void nrnmpi_char_alltoallv(char* s, int* scnt, int* sdispl, char* r, int* rcnt, int* rdispl);

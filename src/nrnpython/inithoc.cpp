@@ -1,5 +1,6 @@
 #include "nrnmpiuse.h"
 #include <stdio.h>
+#include <stdint.h>
 #include "nrnmpi.h"
 #include "nrnpython_config.h"
 #include <Python.h>
@@ -12,6 +13,7 @@ extern "C" {
 extern char** nrn_global_argv;
 
 extern void nrnpy_augment_path();
+extern void(*p_nrnpython_finalize)();
 
 #if PY_MAJOR_VERSION >= 3
 extern PyObject* nrnpy_hoc();
@@ -40,6 +42,13 @@ static int argc_mpi = 2;
 
 static const char* argv_nompi[] = {"NEURON", "-dll", 0};
 static int argc_nompi = 1;
+
+static void nrnpython_finalize() {
+  Py_Finalize();
+#if linux
+  system("stty sane");
+#endif
+}
 
 static char* env[] = {0};
 #if PY_MAJOR_VERSION >= 3
@@ -110,6 +119,7 @@ printf("NEURON_INIT_MPI exists in env but NEURON cannot initialize MPI because:\
 	}
 #endif
 	nrn_is_python_extension = 1;
+	p_nrnpython_finalize = nrnpython_finalize;
 #if NRNMPI
 	nrnmpi_init(1, &argc, &argv); // may change argc and argv
 #if 0 && !defined(NRNMPI_DYNAMICLOAD)

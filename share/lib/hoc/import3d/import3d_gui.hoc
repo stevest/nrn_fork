@@ -1,4 +1,5 @@
 {load_file("celbild.hoc")}
+{load_file("stdlib.hoc")}
 
 begintemplate Import3d_GUI
 public swc, diam_glyph, box, plrot, readfile, redraw, name
@@ -910,8 +911,12 @@ func set_nameindex() {local i, min  localobj sec
 	return min
 }
 
-proc instantiate() {local i, j, min  localobj sec, xx, yy, zz, dd
+proc instantiate() {local i, j, min, haspy  localobj sec, xx, yy, zz, dd, pyobj
 	chk_valid()
+	haspy = nrnpython("import neuron")
+	if (haspy) {
+        pyobj = new PythonObject()
+	}
 	min = set_nameindex(swc.sections)
 	// create
 	for i = 0, types.size-1 {
@@ -953,6 +958,9 @@ proc instantiate() {local i, j, min  localobj sec, xx, yy, zz, dd
 		zz = sec.raw.getrow(2).c(j)
 		dd = sec.d.c(j)
 		if (sec.iscontour_) {
+            if (haspy) {
+                pyobj.neuron._declare_contour(sec, tstr)
+            }
 			contour2centroid(xx, yy, zz, dd, sec)
 		}
 		if (dd.size == 1) { sphere_rep(xx, yy, zz, dd) }
@@ -1080,6 +1088,7 @@ g.line(mean.x[0] + 20*major.x[0], mean.x[1] + 20*major.x[1]) g.flush
 //printf("removed d %d %g\n", j, d.x[j])
 			d.remove(j)
 			rad.remove(j)
+			if (j != d.size()) { j += 1 }
 		}
 	}
 	for (j = side2.size-1; j > 0; j -= 1) {
@@ -1087,6 +1096,7 @@ g.line(mean.x[0] + 20*major.x[0], mean.x[1] + 20*major.x[1]) g.flush
 //printf("removed side2 %d %g\n", j, side2.x[j])
 			side2.remove(j)
 			rad2.remove(j)
+			if (j != side2.size()) { j += 1 }
 		}
 	}
 	// can interpolate so diams on either side of major have same d
@@ -1103,7 +1113,7 @@ g.line(mean.x[0] + 20*major.x[0], mean.x[1] + 20*major.x[1]) g.flush
 		pt = major.c.mul(d.x[i]).add(mean)
 		$o4.x[i] = abs(rad.x[i] - rad2.x[i])
 		tobj = pt.c.add(minor.c.mul(rad.x[i]))
-if (g != nil) g.beginline(5,1) g.line(tobj.x[0], tobj.x[1])
+if (g != nil) g.beginline(5,3) g.line(tobj.x[0], tobj.x[1])
 		tobj = pt.c.add(minor.c.mul(rad2.x[i]))
 if (g != nil) g.line(tobj.x[0], tobj.x[1]) g.flush
 //		pt.add(minor.c.mul(rad2.x[i])).add(minor.c.mul(rad.x[i]))

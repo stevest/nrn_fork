@@ -6,7 +6,7 @@ extern "C" {
 #endif
 
 extern void cvode_fadvance(double);
-extern void cvode_finitialize(void);
+extern void cvode_finitialize(double);
 extern void nrncvode_set_t(double);
 extern void deliver_net_events(NrnThread*);
 extern void nrn_deliver_events(NrnThread*);
@@ -24,7 +24,7 @@ extern void nrndae_update(void);
 extern void nrn_update_2d(NrnThread*);
 extern void nrn_capacity_current(NrnThread* _nt, Memb_list* ml);
 extern void nrn_spike_exchange_init(void);
-extern void nrn_spike_exchange(void);
+extern void nrn_spike_exchange(NrnThread* nt);
 
 #if defined(__cplusplus)
 }

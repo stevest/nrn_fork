@@ -66,6 +66,7 @@ extern int node_index_exact(Section*, double);
 extern void nrn_cachevec(int);
 extern void nrn_ba(NrnThread*, int);
 extern void nrniv_recalc_ptrs(void);
+extern void nrn_recalc_ptrvector(void);
 extern void nrn_recalc_ptrs(double*(*r)(double*));
 extern void nrn_rhs_ext(NrnThread*);
 extern void nrn_setup_ext(NrnThread*);
@@ -121,6 +122,9 @@ extern int nrn_vartype(Symbol*); // nrnocCONST, DEP, STATE
 extern void recalc_diam(void);
 extern double nrn_call_mech_func(Symbol*, int narg, Prop*, int type);
 extern Prop* nrn_mechanism_check(int type, Section* sec, int inode);
+extern int nrn_use_fast_imem;
+extern void nrn_fast_imem_alloc();
+extern void nrn_calc_fast_imem(NrnThread*);
 
 extern void nrn_pt3dclear(Section*);
 extern void nrn_length_change(Section*, double);

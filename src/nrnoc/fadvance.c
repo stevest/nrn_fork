@@ -147,6 +147,8 @@ existence of nrnthread_v_transfer (even if one thread).
 #if 1 || PARANEURON
 void (*nrnmpi_v_transfer_)(); /* called by thread 0 */
 void (*nrnthread_v_transfer_)(NrnThread* nt);
+/* if at least one gap junction has a source voltage with extracellular inserted */
+void (*nrnthread_vi_compute_)(NrnThread* nt);
 #endif
 
 #if VECTORIZE
@@ -158,6 +160,7 @@ int cvode_active_;
 #endif
 
 int stoprun;
+int nrn_use_fast_imem;
 
 #define PROFILE 0
 #include "profile.h"
@@ -565,14 +568,32 @@ static void update(NrnThread* _nt)
 #if EXTRACELLULAR
 	nrn_update_2d(_nt);
 #endif
-
+	if (nrnthread_vi_compute_) { (*nrnthread_vi_compute_)(_nt); }
 #if I_MEMBRANE
 	if (_nt->tml) {
 		assert(_nt->tml->index == CAP);
 		nrn_capacity_current(_nt, _nt->tml->ml);
 	}
 #endif
+	if (nrn_use_fast_imem) { nrn_calc_fast_imem(_nt); }
+}
 
+void nrn_calc_fast_imem(NrnThread* _nt) {
+	int i;
+	int i1 = 0;
+	int i3 = _nt->end;
+	double* pd = _nt->_nrn_fast_imem->_nrn_sav_d;
+	double* prhs = _nt->_nrn_fast_imem->_nrn_sav_rhs;
+    if (use_cachevec) {
+	for (i = i1; i < i3 ; ++i) {
+		prhs[i] = (pd[i]*VEC_RHS(i) + prhs[i])*VEC_AREA(i)*0.01;
+	}
+    }else{
+	for (i = i1; i < i3 ; ++i) {
+		Node* nd = _nt->_v_node[i];
+		prhs[i] = (pd[i]*NODERHS(nd) + prhs[i])*NODEAREA(nd)*0.01;
+	}
+    }
 }
 
 void fcurrent(void)
@@ -764,6 +785,9 @@ void nrn_finitialize(int setv, double v) {
 		}
 	}
 #if 1 || PARANEURON
+	if (nrnthread_vi_compute_) FOR_THREADS(_nt){
+		(*nrnthread_vi_compute_)(_nt);
+	}
 	if (nrnmpi_v_transfer_) {
 		(nrnmpi_v_transfer_)();
 	}
@@ -847,12 +871,15 @@ hoc_warning("errno set during call to INITIAL block", (char*)0);
 		nrn_deliver_events(nrn_threads + i); /* The INITIAL sent events at t=0 */
 	}
 	if (cvode_active_) {
-		cvode_finitialize();
+		cvode_finitialize(t);
 		nrn_record_init();
 	}else{
 		state_discon_allowed_ = 0;
 		for (i=0; i < nrn_nthread; ++i) {
 			setup_tree_matrix(nrn_threads + i);
+			if (nrn_use_fast_imem) {
+				nrn_calc_fast_imem(nrn_threads + i);
+			}
 		}
 		state_discon_allowed_ = 1;
 #if 0 && NRN_DAQ
@@ -869,7 +896,7 @@ hoc_warning("errno set during call to INITIAL block", (char*)0);
 		nrn_deliver_events(nrn_threads + i); /* The record events at t=0 */
 	}
 #if NRNMPI
-	nrn_spike_exchange();
+	nrn_spike_exchange(nrn_threads);
 #endif
 	if (nrn_allthread_handle) { (*nrn_allthread_handle)(); }
 	
