@@ -71,7 +71,7 @@ static PyObject* pfunc_get_docstring = NULL;
 static const char* hocobj_docstring = "class neuron.hoc.HocObject - Hoc Object wrapper";
 
 
-#if 0
+#if 1
 }
 #include <hoccontext.h>
 extern "C" {
@@ -603,6 +603,7 @@ static PyObject* hocobj_call(PyHocObject* self, PyObject* args, PyObject* kwrds)
 			result = (PyObject*)fcall((void*)self, (void*)args);
 		}
 	}else{
+		PyErr_SetString(PyExc_TypeError, "object is not callable");
 		return NULL;
 	}
 	if (section) {
