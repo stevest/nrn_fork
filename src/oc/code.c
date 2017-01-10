@@ -2290,6 +2290,7 @@ int araypt(Symbol* sp, int type) {	/* return subscript - subs in reverse order o
 	int i, total, varn;
 	int d;
 	register Arrayinfo *aray;
+	char buffer[100];
 	if (type == OBJECTVAR) {
 		aray = OPARINFO(sp);
 	}else{
@@ -2302,7 +2303,10 @@ int araypt(Symbol* sp, int type) {	/* return subscript - subs in reverse order o
 		tstkchk((stackp - 2*(aray->nsub - i) + 1)->i, NUMBER);
 		d = (int)((stackp - 2*(aray->nsub - i))->val + EPS);
 		if (d < 0 || d >= aray->sub[i])
-			execerror("subscript out of range", sp->name);
+			/*Write debug info */
+			sprintf(buffer, "Subscript %d out of range in %s. Max subscripts in object: %d.",d , sp->name, aray->nsub);
+			execerror(buffer, sp->name);
+			/*execerror("subscript out of range", sp->name);*/
 		total = total * (aray->sub[i]) + d;
 	}
 	for (i = 0; i< aray->nsub; i++)
